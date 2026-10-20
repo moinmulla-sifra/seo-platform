@@ -856,6 +856,7 @@ function AuthScreen({ client, notify }: { client: NonNullable<typeof supabase>; 
     </form>
     <div className="saas-auth-links">{mode === 'signin' ? <><button onClick={() => { setMode('reset'); setMessage(''); }}>Forgot password?</button><span>·</span><button onClick={() => { setMode('signup'); setMessage(''); }}>Create account</button></> : <button onClick={() => { setMode('signin'); setMessage(''); }}>Back to sign in</button>}</div>
     <p className="saas-auth-footnote"><ShieldCheck size={14} /> Passwords are handled by Supabase Auth and are never sent to LocalPulse chat or support.</p>
+    <div className="saas-auth-links"><a href="?demo=1">Explore the demo dashboard</a></div>
   </section></div>;
 }
 
