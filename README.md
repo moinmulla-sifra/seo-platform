@@ -20,15 +20,13 @@ npm install
 npm run dev
 ```
 
-The default app launches in DEMO mode without Supabase credentials. To test the authenticated workspace mode:
+The app now defaults to authenticated SaaS mode. The shared LocalPulse Supabase URL and publishable key are configured as browser-safe defaults in `src/lib/supabase.ts` and documented in `.env.example`; override them using environment variables only when using a separate staging/development project.
 
-1. Copy `.env.example` to `.env.local`.
-2. Set `VITE_LOCALPULSE_MODE=production`.
-3. Set `VITE_SUPABASE_URL` to the API URL for the chosen Supabase project.
-4. Set `VITE_SUPABASE_ANON_KEY` to that project's publishable/anon key.
-5. Apply the SQL migrations in `supabase/migrations/` to that same project.
-6. Enable email/password auth in Supabase Auth and configure the site URL plus allowed redirect URLs for local development and the deployed domain.
-7. Restart Vite after changing environment variables.
+1. Run `npm install` and `npm run dev`, or deploy the `main` branch to a static host.
+2. Apply the SQL migrations in `supabase/migrations/` to the intended Supabase project (migrations 001–003 were applied to the connected `seo-platform` project in the `friday` organization).
+3. Enable email/password auth in Supabase Auth, configure the Site URL and allowed redirect URLs for local development and the deployed domain, and verify the email confirmation flow.
+4. The normal root URL opens sign-in/create-account. Use `/?demo=1` to opt into the demo preview.
+5. When deploying, confirm that any pre-existing `VITE_LOCALPULSE_MODE=demo` build variable is removed; production builds default to the SaaS flow.
 
 Use only the browser-safe publishable/anon key in `VITE_*`. Never put a `service_role` key, Google client secret, Google refresh token, or Dodo API key in client code or `.env.local` variables prefixed with `VITE_`. Server secrets belong in Supabase Edge Function secrets or a secure server secret manager.
 
@@ -42,16 +40,16 @@ npm run preview
 
 A GitHub Actions workflow at `.github/workflows/ci.yml` runs the type check and production build on pushed implementation branches and pull requests. A green CI run does not replace RLS tests or real-provider integration testing.
 
-## Demo mode vs authenticated mode
+## Demo mode vs authenticated SaaS mode
 
-### Demo preview
+### Optional demo preview (`/?demo=1`)
 - Uses fictional, deterministic data for TechNova Computers plus two other example businesses.
 - Demo records are not copied into authenticated workspace tables.
 - Demo imports, settings and checklist changes are session-only.
 - Provider cards never pretend that Google or a POS is connected.
 
-### Authenticated workspace mode
-- A signed-in owner creates a workspace and its first business.
+### Default authenticated SaaS mode
+- A customer signs up once, verifies their email if confirmation is enabled, signs in, and creates their own workspace and first business inside the shared app. No customer-specific website or deployment is required.
 - All business-owned records carry a `workspace_id`; SQL RLS policies enforce membership at the database layer.
 - Revenue and order counts come from non-demo `sales_orders` records with a completed status. Leads remain separate.
 - CSV/XLS/XLSX import uses the first worksheet, supports column mapping, checks mandatory fields, flags duplicate order IDs, previews rejected rows, and appends valid rows only after explicit confirmation. It does not overwrite old records.
@@ -88,7 +86,7 @@ The migrations are a security-focused starter, not a certification or substitute
 
 ## Environment and service configuration
 
-See `.env.example`. Configure only the variables needed for the environment in use. Google OAuth client secrets, refresh tokens and Dodo API credentials are not required for the demo and are intentionally not included yet.
+See `.env.example`. The Supabase URL and publishable key used by the shared SaaS project are public browser configuration, not secret credentials; Row Level Security is the security boundary. Google OAuth client secrets, refresh tokens and Dodo API credentials are server-side secrets and are intentionally not included.
 
 ## Current limitations / known gaps
 
