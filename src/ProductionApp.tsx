@@ -60,15 +60,47 @@ const nav: { id: PageId; title: string; icon: LucideIcon; group: string }[] = [
   { id: 'settings', title: 'Settings', icon: Settings2, group: 'MANAGE' },
 ];
 
-const providers: { id: string; name: string; detail: string; supported: string; scope: string }[] = [
-  { id: 'google_search_console', name: 'Google Search Console', detail: 'Search performance', supported: 'Clicks, impressions, CTR, average position and queries when synced.', scope: 'Read-only Search Console access via Google OAuth.' },
-  { id: 'google_analytics_4', name: 'Google Analytics 4', detail: 'Website activity', supported: 'Sessions and selected website events when synced.', scope: 'Read-only Analytics property access via Google OAuth.' },
-  { id: 'google_business_profile', name: 'Google Business Profile', detail: 'Local profile insights', supported: 'Supported profile views and interactions, subject to API availability.', scope: 'Official supported Google API authorization only.' },
-  { id: 'csv_import', name: 'Excel / CSV import', detail: 'Sales and service records', supported: 'Recorded orders, revenue, source channel and service categories.', scope: 'Local file selected by a signed-in workspace member.' },
-  { id: 'google_sheets', name: 'Google Sheets', detail: 'Spreadsheet sync', supported: 'Read-only sales/order rows after OAuth and field mapping.', scope: 'Least-privilege read-only Sheets access.' },
-  { id: 'pos_crm', name: 'POS / CRM', detail: 'Order management', supported: 'Actual sales, service tickets and customer enquiries if a connector is implemented.', scope: 'Provider-specific authorization; never request account passwords.' },
-  { id: 'rank_review_provider', name: 'Ranking / review provider', detail: 'Optional data provider', supported: 'Local grid tracking and reviews only after choosing and configuring a provider.', scope: 'Provider-specific API permission, costs and quota.' },
-];
+const providers: {
+  id: string; name: string; detail: string; supported: string; scope: string;
+  category: string; readiness: 'available' | 'planned' | 'experimental';
+}[] = [
+  // Search & indexing
+  { id: 'google_search_console', name: 'Google Search Console', category: 'Search & indexing', readiness: 'available', detail: 'Google organic search performance', supported: 'Clicks, impressions, CTR, average position and query/page reports after an authorized sync. Average position is not a live rank check.', scope: 'Read-only Google OAuth; requires a verified Search Console property.' },
+  { id: 'bing_webmaster', name: 'Bing Webmaster Tools', category: 'Search & indexing', readiness: 'planned', detail: 'Bing search performance', supported: 'Query and traffic statistics, crawl information, backlinks and supported URL/sitemap submissions.', scope: 'Microsoft/Bing OAuth or an API key, plus a site verified in Bing Webmaster Tools.' },
+  { id: 'indexnow', name: 'IndexNow', category: 'Search & indexing', readiness: 'planned', detail: 'Notify participating search engines', supported: 'Submit new, changed or removed URLs to participating search engines. A ping does not guarantee indexing or rankings.', scope: 'Requires domain/site ownership and a correctly hosted IndexNow key file.' },
+
+  // Analytics & behavior
+  { id: 'google_analytics_4', name: 'Google Analytics 4', category: 'Analytics & behavior', readiness: 'available', detail: 'Website activity and engagement', supported: 'Sessions and selected website metrics/events supported by the current sync implementation.', scope: 'Read-only Google OAuth and access to a GA4 property.' },
+  { id: 'microsoft_clarity', name: 'Microsoft Clarity', category: 'Analytics & behavior', readiness: 'planned', detail: 'Behavior insights and heatmaps', supported: 'Project dashboard insights can be exported through Clarity’s Data Export API; replay playback is not treated as a normal metrics export.', scope: 'Customer creates a Clarity project and securely grants an API token; tracking snippet must be installed on the website.' },
+  { id: 'matomo_analytics', name: 'Matomo Analytics', category: 'Analytics & behavior', readiness: 'planned', detail: 'Self-hosted or cloud analytics', supported: 'Reporting API metrics from an authorized Matomo site; exact reports depend on the instance and permissions.', scope: 'Matomo site URL, site ID and a securely stored API token. Self-hosting has infrastructure costs.' },
+
+  // Performance & technical audits
+  { id: 'pagespeed_insights', name: 'PageSpeed Insights API', category: 'Performance & technical audits', readiness: 'planned', detail: 'On-demand Lighthouse audits', supported: 'Mobile/desktop lab scores, audit opportunities and diagnostics for a submitted URL.', scope: 'Google PageSpeed Insights API and controlled request quotas; this is an audit, not historical real-user data.' },
+  { id: 'chrome_ux_report', name: 'Chrome UX Report (CrUX)', category: 'Performance & technical audits', readiness: 'planned', detail: 'Real-user Core Web Vitals', supported: 'Aggregated field data such as LCP, INP and CLS when Chrome has enough eligible data for the URL/origin.', scope: 'Chrome UX Report API key; some pages/origins may return no data due to eligibility/sample thresholds.' },
+  { id: 'website_crawler', name: 'Technical website crawler', category: 'Performance & technical audits', readiness: 'planned', detail: 'Site structure and technical checks', supported: 'Planned crawl for HTTP status, broken links, title/H1, canonical and robots directives with per-site crawl limits.', scope: 'A secured crawler worker with rate limits, robots-aware controls, SSRF protection and site ownership validation.' },
+
+  // Local presence
+  { id: 'google_business_profile', name: 'Google Business Profile', category: 'Local presence', readiness: 'available', detail: 'Local profile performance', supported: 'Supported profile metrics and search-keyword impressions where the approved Google APIs expose them. Reviews are a separate capability.', scope: 'Official Google OAuth and Business Profile API access; some accounts need separate access approval/quota.' },
+  { id: 'bing_places', name: 'Bing Places for Business', category: 'Local presence', readiness: 'planned', detail: 'Local listing management', supported: 'Planned listing status and location-management features, subject to current Microsoft API availability and permissions.', scope: 'Eligible Bing Places account and approved API access where available; not yet connected in LocalPulse.' },
+
+  // Files & operational data
+  { id: 'google_sheets', name: 'Google Sheets', category: 'Files & operational data', readiness: 'available', detail: 'Spreadsheet sales-data sync', supported: 'Read-only sheet import after field mapping, with duplicate checks and import history.', scope: 'Least-privilege Google OAuth; the customer must grant access to the selected spreadsheet.' },
+  { id: 'google_drive', name: 'Google Drive', category: 'Files & operational data', readiness: 'planned', detail: 'Shared files and folder imports', supported: 'Planned file discovery/import for authorized CSV/XLSX and supported document formats.', scope: 'A separate, least-privilege Drive OAuth scope and explicit file access are required.' },
+  { id: 'csv_import', name: 'CSV / Excel import', category: 'Files & operational data', readiness: 'available', detail: 'Sales and service records', supported: 'Upload CSV/XLS/XLSX files, map columns, validate rows and review import history.', scope: 'File selected by a signed-in workspace member. No third-party account password is required.' },
+  { id: 'structured_file_import', name: 'JSON / Parquet imports', category: 'Files & operational data', readiness: 'planned', detail: 'Structured data uploads', supported: 'Planned JSON and Parquet ingestion for supported operational metrics and catalogs; CSV/Excel import is available now.', scope: 'File validation, size limits and schema mapping will be required before importing.' },
+  { id: 'database_connectors', name: 'PostgreSQL / MySQL / SQLite', category: 'Files & operational data', readiness: 'planned', detail: 'Operational database ingestion', supported: 'Planned controlled ingestion of inventory, POS or service records. SQLite file upload is distinct from live database access.', scope: 'Live connections require encrypted credentials, network allowlists, read-only DB users and query limits.' },
+
+  // Search demand & content platforms
+  { id: 'google_trends', name: 'Google Trends (experimental)', category: 'Search demand & content', readiness: 'experimental', detail: 'Relative search-interest research', supported: 'Potential relative interest and seasonal patterns through community tooling; values are not absolute search volumes and calls may break or be rate-limited.', scope: 'pytrends is unofficial and is not a stable official Google Trends API; results must be labeled experimental.' },
+  { id: 'wordpress', name: 'WordPress REST API', category: 'Search demand & content', readiness: 'planned', detail: 'WordPress content and SEO metadata', supported: 'Planned reads for published pages/posts and supported SEO plugin metadata; writes would require separate permission.', scope: 'Customer-provided site URL and application password/token stored server-side with least privilege.' },
+  { id: 'strapi', name: 'Strapi CMS', category: 'Search demand & content', readiness: 'planned', detail: 'Headless CMS content', supported: 'Planned page/content metadata sync via a customer’s Strapi API.', scope: 'Customer-managed API token and read-only collection permissions where possible.' },
+  { id: 'ghost_cms', name: 'Ghost CMS', category: 'Search demand & content', readiness: 'planned', detail: 'Publishing and content metadata', supported: 'Planned post/page and metadata sync using supported Ghost Admin/Content API capabilities.', scope: 'Customer-managed API credentials; only the minimum scopes needed should be granted.' },
+  { id: 'cms_webhooks', name: 'Custom CMS & webhooks', category: 'Search demand & content', readiness: 'planned', detail: 'Bring your own platform', supported: 'Planned signed webhook ingestion for approved CMS, static-site and internal tool events.', scope: 'Per-workspace webhook secrets, signature checks, replay protection and payload validation.' },
+
+  // Additional business systems
+  { id: 'pos_crm', name: 'POS / CRM connectors', category: 'Business systems', readiness: 'planned', detail: 'Orders, service jobs and enquiries', supported: 'Sales records, service tickets and customer enquiries only for specifically implemented providers.', scope: 'Provider-specific OAuth/API permissions and customer-approved data mapping.' },
+  { id: 'rank_review_provider', name: 'Rank tracking & review partners', category: 'Business systems', readiness: 'planned', detail: 'Optional specialist integrations', supported: 'Potential local rank grids or review workflows after selecting a provider. No rankings/reviews are fabricated when disconnected.', scope: 'Provider selection, licensing, API access, permitted review actions and any vendor fees must be checked first.' },
+];;
 
 const titles: Record<PageId, { title: string; subtitle: string }> = {
   overview: { title: 'Overview', subtitle: 'A reliable summary of the data this workspace has provided.' },
@@ -966,19 +998,25 @@ export default function ProductionApp() {
                 const isGoogle = ['google_search_console','google_analytics_4','google_business_profile','google_sheets'].includes(provider.id);
                 const connected = source?.status === 'connected';
                 const selected = Boolean(source?.external_property_id && source.external_property_id !== '__resource_pending__');
-                const status = provider.id === 'csv_import' ? 'Available'
+                const status = provider.readiness === 'planned' ? 'Planned'
+                  : provider.readiness === 'experimental' ? 'Experimental'
+                  : provider.id === 'csv_import' ? 'Available'
                   : connected ? (selected ? 'Connected' : 'Choose property')
                   : source?.status === 'pending' ? 'Authorization pending'
                   : source?.status === 'error' ? 'Needs attention' : 'Not connected';
-                const icon = provider.id.indexOf('google') === 0 ? Globe2 : provider.id === 'csv_import' ? FileSpreadsheet : Database;
+                const statusClass = (status === 'Connected' || status === 'Available') ? 'connected'
+                  : status === 'Planned' ? 'planned'
+                  : status === 'Experimental' ? 'experimental' : 'disconnected';
+                const icon = provider.id.indexOf('google') === 0 || ['bing_webmaster','indexnow','bing_places','wordpress','strapi','ghost_cms'].includes(provider.id) ? Globe2
+                  : ['csv_import','google_sheets','google_drive','structured_file_import'].includes(provider.id) ? FileSpreadsheet : Database;
                 const ProviderIcon = icon;
                 const pickerOpen = Boolean(propertyPicker && source && propertyPicker.integrationId === source.id);
                 const busy = oauthBusyProvider === provider.id || oauthBusyProvider === provider.id + ':sync' || oauthBusyProvider === provider.id + ':disconnect';
                 const cfg = source?.public_config || {};
                 const selectedTitle = typeof cfg.selected_resource_title === 'string' ? cfg.selected_resource_title : '';
                 return <section className="saas-card saas-provider-card" key={provider.id}>
-                  <div className="saas-provider-top"><span className="saas-provider-icon"><ProviderIcon size={21} /></span><span className={'saas-status ' + ((status === 'Connected' || status === 'Available') ? 'connected' : 'disconnected')}>{status}</span></div>
-                  <h2>{provider.name}</h2><p className="saas-provider-detail">{provider.detail}</p><p className="saas-provider-copy">{provider.supported}</p>
+                  <div className="saas-provider-top"><span className="saas-provider-icon"><ProviderIcon size={21} /></span><span className={'saas-status ' + statusClass}>{status}</span></div>
+                  <p className="saas-provider-category">{provider.category}</p><h2>{provider.name}</h2><p className="saas-provider-detail">{provider.detail}</p><p className="saas-provider-copy">{provider.supported}</p>
                   <div className="saas-scope"><b>Access / setup</b><span>{provider.scope}</span></div>
                   {connected ? <div className="saas-connection-account"><span>Google account</span><b>{source?.account_label || 'Authorized Google account'}</b>{selected ? <small>Property: {selectedTitle || source?.external_property_id}</small> : <small>Authorization saved. Select the correct property before syncing.</small>}</div> : null}
                   <div className="saas-provider-sync"><span>Last synced</span><b>{connected ? formatDateTime(source?.last_sync_at) : provider.id === 'csv_import' ? 'On each confirmed import' : 'Never'}</b></div>
@@ -992,7 +1030,9 @@ export default function ProductionApp() {
                           <button className="saas-disconnect-btn" disabled={busy} onClick={() => void disconnectGoogle(provider.id, source!)}>Disconnect</button>
                         </>}
                     </div>
-                    : <button className="saas-btn secondary" onClick={() => notify('This connector is not implemented yet. No connection was attempted.', 'info')}>Not available yet</button>}
+                    : provider.readiness === 'planned' ? <button className="saas-btn secondary" disabled aria-label={provider.name + ' integration is planned'}>Planned integration</button>
+                    : provider.readiness === 'experimental' ? <button className="saas-btn secondary" disabled aria-label={provider.name + ' integration is experimental'}>Experimental connector</button>
+                    : <button className="saas-btn secondary" disabled>Not configured</button>}
                   {pickerOpen && propertyPicker ? <div className="saas-property-picker">
                     <div><b>{provider.id === 'google_sheets' ? 'Choose a spreadsheet' : 'Choose a property / location'}</b><button className="saas-icon-btn" onClick={() => setPropertyPicker(null)} aria-label="Close property picker"><X size={15} /></button></div>
                     {propertyPicker.loading ? <p className="saas-muted"><LoaderCircle className="saas-spin" size={14} /> Loading resources from Google…</p>
