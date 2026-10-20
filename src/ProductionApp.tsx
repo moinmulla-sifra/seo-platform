@@ -100,7 +100,7 @@ const providers: {
   // Additional business systems
   { id: 'pos_crm', name: 'POS / CRM connectors', category: 'Business systems', readiness: 'planned', detail: 'Orders, service jobs and enquiries', supported: 'Sales records, service tickets and customer enquiries only for specifically implemented providers.', scope: 'Provider-specific OAuth/API permissions and customer-approved data mapping.' },
   { id: 'rank_review_provider', name: 'Rank tracking & review partners', category: 'Business systems', readiness: 'planned', detail: 'Optional specialist integrations', supported: 'Potential local rank grids or review workflows after selecting a provider. No rankings/reviews are fabricated when disconnected.', scope: 'Provider selection, licensing, API access, permitted review actions and any vendor fees must be checked first.' },
-];;
+];
 
 const titles: Record<PageId, { title: string; subtitle: string }> = {
   overview: { title: 'Overview', subtitle: 'A reliable summary of the data this workspace has provided.' },
