@@ -28,3 +28,5 @@ jobs:
           deno-version: v2.x
       - name: Type-check Google OAuth Edge Function
         run: deno check supabase/functions/google-oauth/index.ts
+      - name: Type-check website audit Edge Function
+        run: deno check supabase/functions/website-audit/index.ts
