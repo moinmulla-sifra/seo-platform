@@ -42,6 +42,18 @@ type PropertyPicker = {
   selectedId: string; spreadsheetId: string; loading: boolean; saving: boolean;
 };
 type GoogleSetupInfo = { missingSecrets: string[]; redirectUri: string; message: string } | null;
+type WebsiteAuditResult = {
+  scores?: { label: string; value: number | null }[];
+  metrics?: { label: string; value: string; status?: string }[];
+  opportunities?: { title: string; details: string; savings: string }[];
+  note?: string;
+};
+type WebsiteAudit = {
+  id: string; workspace_id: string; business_id: string;
+  provider: 'pagespeed_insights' | 'chrome_ux_report'; strategy: 'mobile' | 'desktop';
+  target_url: string; run_status: 'completed' | 'failed'; result: WebsiteAuditResult;
+  error_message: string | null; created_at: string;
+};
 type ImportRun = { id: string; file_name: string; created_at: string; row_count: number; accepted_count: number; rejected_count: number; status: string };
 type ImportField = 'id' | 'date' | 'status' | 'type' | 'product' | 'amount' | 'channel';
 type ImportMapping = Record<ImportField, string>;
@@ -75,8 +87,8 @@ const providers: {
   { id: 'matomo_analytics', name: 'Matomo Analytics', category: 'Analytics & behavior', readiness: 'planned', detail: 'Self-hosted or cloud analytics', supported: 'Reporting API metrics from an authorized Matomo site; exact reports depend on the instance and permissions.', scope: 'Matomo site URL, site ID and a securely stored API token. Self-hosting has infrastructure costs.' },
 
   // Performance & technical audits
-  { id: 'pagespeed_insights', name: 'PageSpeed Insights API', category: 'Performance & technical audits', readiness: 'planned', detail: 'On-demand Lighthouse audits', supported: 'Mobile/desktop lab scores, audit opportunities and diagnostics for a submitted URL.', scope: 'Google PageSpeed Insights API and controlled request quotas; this is an audit, not historical real-user data.' },
-  { id: 'chrome_ux_report', name: 'Chrome UX Report (CrUX)', category: 'Performance & technical audits', readiness: 'planned', detail: 'Real-user Core Web Vitals', supported: 'Aggregated field data such as LCP, INP and CLS when Chrome has enough eligible data for the URL/origin.', scope: 'Chrome UX Report API key; some pages/origins may return no data due to eligibility/sample thresholds.' },
+  { id: 'pagespeed_insights', name: 'PageSpeed Insights API', category: 'Performance & technical audits', readiness: 'available', detail: 'On-demand Lighthouse audits', supported: 'Live mobile lab scores for performance, accessibility, best practices and SEO, plus audit opportunities for the saved business website.', scope: 'Server-side PageSpeed Insights API request; request quotas apply. This is an on-demand lab audit, not historical real-user data.' },
+  { id: 'chrome_ux_report', name: 'Chrome UX Report (CrUX)', category: 'Performance & technical audits', readiness: 'available', detail: 'Real-user Core Web Vitals', supported: 'Aggregated phone/desktop field data such as LCP, INP and CLS when Chrome has enough eligible traffic for the website origin.', scope: 'Requires CRUX_API_KEY as a Supabase Edge Function secret, with Chrome UX Report API enabled. Some sites may have no eligible data.' },
   { id: 'website_crawler', name: 'Technical website crawler', category: 'Performance & technical audits', readiness: 'planned', detail: 'Site structure and technical checks', supported: 'Planned crawl for HTTP status, broken links, title/H1, canonical and robots directives with per-site crawl limits.', scope: 'A secured crawler worker with rate limits, robots-aware controls, SSRF protection and site ownership validation.' },
 
   // Local presence
@@ -224,6 +236,8 @@ export default function ProductionApp() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [keywords, setKeywords] = useState<Keyword[]>([]);
   const [integrations, setIntegrations] = useState<Integration[]>([]);
+  const [websiteAudits, setWebsiteAudits] = useState<WebsiteAudit[]>([]);
+  const [auditBusyProvider, setAuditBusyProvider] = useState<string | null>(null);
   const [importRuns, setImportRuns] = useState<ImportRun[]>([]);
   const [page, setPage] = useState<PageId>('overview');
   const [range, setRange] = useState(30);
@@ -552,7 +566,7 @@ export default function ProductionApp() {
   };
   const refreshDataOnly = async () => {
     if (!client || !activeWorkspaceId) return;
-    const [sales, history, leadRows, taskRows, keywordRows, metricRows, localRows, reviewRows, integrationRows] = await Promise.all([
+    const [sales, history, leadRows, taskRows, keywordRows, metricRows, localRows, reviewRows, integrationRows, auditRows] = await Promise.all([
       client.from('sales_orders').select('*').eq('workspace_id', activeWorkspaceId).eq('is_demo', false).order('order_date', { ascending: false }).limit(2000),
       client.from('sales_imports').select('*').eq('workspace_id', activeWorkspaceId).order('created_at', { ascending: false }).limit(50),
       client.from('leads').select('*').eq('workspace_id', activeWorkspaceId).eq('is_demo', false).order('lead_date', { ascending: false }).limit(1000),
@@ -562,6 +576,7 @@ export default function ProductionApp() {
       client.from('local_profile_metrics_daily').select('*').eq('workspace_id', activeWorkspaceId).eq('is_demo', false).order('metric_date', { ascending: false }).limit(1000),
       client.from('reviews').select('*').eq('workspace_id', activeWorkspaceId).eq('is_demo', false).order('review_date', { ascending: false }).limit(500),
       client.from('integrations').select('*').eq('workspace_id', activeWorkspaceId).order('created_at', { ascending: false }),
+      client.from('website_performance_audits').select('*').eq('workspace_id', activeWorkspaceId).order('created_at', { ascending: false }).limit(50),
     ]);
     if (sales.error) throw sales.error;
     setOrders((sales.data || []) as Order[]);
@@ -573,6 +588,8 @@ export default function ProductionApp() {
     setLocalMetrics((localRows.data || []) as LocalMetric[]);
     setReviews((reviewRows.data || []) as Review[]);
     setIntegrations((integrationRows.data || []) as Integration[]);
+    if (auditRows.error) throw auditRows.error;
+    setWebsiteAudits((auditRows.data || []) as unknown as WebsiteAudit[]);
   };
 
   const invokeGoogle = async (body: Record<string, unknown>) => {
@@ -595,6 +612,52 @@ export default function ProductionApp() {
   const refreshAfterOAuth = async () => {
     if (!client || !activeWorkspaceId) return;
     try { await refreshDataOnly(); } catch { /* The main loader will show any workspace query error. */ }
+  };
+
+  const runWebsiteAudit = async (providerId: string) => {
+    if (!client || !activeWorkspaceId || !activeBusiness?.id) {
+      notify('Choose a workspace and business first.', 'error');
+      return;
+    }
+    if (!activeBusiness.website?.trim()) {
+      notify('Add the business website in Settings before running an audit.', 'error');
+      return;
+    }
+    setAuditBusyProvider(providerId);
+    try {
+      const { data, error } = await client.functions.invoke('website-audit', {
+        body: { action: 'run', provider: providerId, workspaceId: activeWorkspaceId, businessId: activeBusiness.id, strategy: 'mobile' },
+      });
+      if (error) {
+        let message = error.message || 'Website audit failed.';
+        const context = (error as unknown as { context?: Response }).context;
+        if (context && typeof context.json === 'function') {
+          try {
+            const detail = await context.json() as { error?: string };
+            if (detail.error) message = detail.error;
+          } catch { /* Keep the SDK message when response content is not JSON. */ }
+        }
+        throw new Error(message);
+      }
+      const response = (data || {}) as { success?: boolean; setupRequired?: boolean; error?: string; instructions?: string; audit?: WebsiteAudit };
+      if (response.setupRequired) {
+        notify((response.error || 'This provider needs one-time server setup.') + (response.instructions ? ' ' + response.instructions : ''), 'error');
+        return;
+      }
+      if (response.audit) {
+        const audit = response.audit;
+        setWebsiteAudits(current => [audit, ...current.filter(item => item.id !== audit.id)].slice(0, 50));
+      }
+      if (!response.success) {
+        notify(response.error || 'The audit did not complete. Review the latest audit result for details.', 'error');
+        return;
+      }
+      notify(providerId === 'pagespeed_insights' ? 'PageSpeed mobile audit completed and saved.' : 'CrUX real-user metrics retrieved and saved.', 'success');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Website audit failed.', 'error');
+    } finally {
+      setAuditBusyProvider(current => current === providerId ? null : current);
+    }
   };
 
   const connectGoogle = async (providerId: string) => {
@@ -996,15 +1059,20 @@ export default function ProductionApp() {
               <div className="saas-integrations-grid">{providers.map(provider => {
                 const source = integrations.filter(row => row.provider === provider.id).sort((a, b) => String(b.last_sync_at || '').localeCompare(String(a.last_sync_at || '')))[0];
                 const isGoogle = ['google_search_console','google_analytics_4','google_business_profile','google_sheets'].includes(provider.id);
+                const isWebsiteAudit = ['pagespeed_insights','chrome_ux_report'].includes(provider.id);
+                const latestAudit = isWebsiteAudit ? websiteAudits.find(item => item.business_id === activeBusiness?.id && item.provider === provider.id) : undefined;
+                const auditResult = latestAudit?.result;
+                const auditBusy = auditBusyProvider === provider.id;
                 const connected = source?.status === 'connected';
                 const selected = Boolean(source?.external_property_id && source.external_property_id !== '__resource_pending__');
                 const status = provider.readiness === 'planned' ? 'Planned'
                   : provider.readiness === 'experimental' ? 'Experimental'
                   : provider.id === 'csv_import' ? 'Available'
+                  : isWebsiteAudit ? (latestAudit?.run_status === 'failed' ? 'Needs attention' : latestAudit ? 'Audit available' : 'Ready to run')
                   : connected ? (selected ? 'Connected' : 'Choose property')
                   : source?.status === 'pending' ? 'Authorization pending'
                   : source?.status === 'error' ? 'Needs attention' : 'Not connected';
-                const statusClass = (status === 'Connected' || status === 'Available') ? 'connected'
+                const statusClass = (status === 'Connected' || status === 'Available' || status === 'Ready to run' || status === 'Audit available') ? 'connected'
                   : status === 'Planned' ? 'planned'
                   : status === 'Experimental' ? 'experimental' : 'disconnected';
                 const icon = provider.id.indexOf('google') === 0 || ['bing_webmaster','indexnow','bing_places','wordpress','strapi','ghost_cms'].includes(provider.id) ? Globe2
@@ -1018,10 +1086,19 @@ export default function ProductionApp() {
                   <div className="saas-provider-top"><span className="saas-provider-icon"><ProviderIcon size={21} /></span><span className={'saas-status ' + statusClass}>{status}</span></div>
                   <p className="saas-provider-category">{provider.category}</p><h2>{provider.name}</h2><p className="saas-provider-detail">{provider.detail}</p><p className="saas-provider-copy">{provider.supported}</p>
                   <div className="saas-scope"><b>Access / setup</b><span>{provider.scope}</span></div>
+                  {isWebsiteAudit && latestAudit ? <div className="saas-audit-result">
+                    {latestAudit.run_status === 'failed' ? <p className="saas-error-copy">{latestAudit.error_message || 'The latest audit failed.'}</p> : <>
+                      {auditResult?.scores?.length ? <div className="saas-audit-scores">{auditResult.scores.map(item => <div key={item.label}><span>{item.label}</span><b>{item.value === null ? '—' : item.value + '/100'}</b></div>)}</div> : null}
+                      {auditResult?.metrics?.length ? <div className="saas-audit-metrics">{auditResult.metrics.map(item => <div key={item.label} className={'saas-audit-metric ' + (item.status ? 'state-' + item.status.replace(/\s+/g, '-') : '')}><span>{item.label}</span><b>{item.value}</b>{item.status ? <small>{item.status}</small> : null}</div>)}</div> : <p className="saas-muted">No eligible metrics were returned.</p>}
+                      {auditResult?.opportunities?.length ? <div className="saas-audit-opportunities"><b>Top opportunities</b>{auditResult.opportunities.slice(0, 3).map(item => <div key={item.title}><span>{item.title}</span><small>{item.savings}</small></div>)}</div> : null}
+                      <p className="saas-audit-note">{auditResult?.note || 'Results reflect the latest saved audit.'}</p>
+                    </>}
+                  </div> : null}
                   {connected ? <div className="saas-connection-account"><span>Google account</span><b>{source?.account_label || 'Authorized Google account'}</b>{selected ? <small>Property: {selectedTitle || source?.external_property_id}</small> : <small>Authorization saved. Select the correct property before syncing.</small>}</div> : null}
-                  <div className="saas-provider-sync"><span>Last synced</span><b>{connected ? formatDateTime(source?.last_sync_at) : provider.id === 'csv_import' ? 'On each confirmed import' : 'Never'}</b></div>
+                  <div className="saas-provider-sync"><span>{isWebsiteAudit ? 'Last audit' : 'Last synced'}</span><b>{isWebsiteAudit ? (latestAudit ? formatDateTime(latestAudit.created_at) : (activeBusiness?.website ? 'On demand' : 'Add website in Settings')) : connected ? formatDateTime(source?.last_sync_at) : provider.id === 'csv_import' ? 'On each confirmed import' : 'Never'}</b></div>
                   {source?.last_error_message ? <p className="saas-error-copy">{source.last_error_message}</p> : null}
                   {provider.id === 'csv_import' ? <button className="saas-btn primary" onClick={beginImport}><Upload size={15} /> Import file</button>
+                    : isWebsiteAudit ? <button className="saas-btn primary" disabled={auditBusy || !activeBusiness?.website} title={!activeBusiness?.website ? 'Add your business website in Settings to enable audits.' : undefined} onClick={() => void runWebsiteAudit(provider.id)}>{auditBusy ? <LoaderCircle className="saas-spin" size={15} /> : <Activity size={15} />}{!activeBusiness?.website ? ' Add website first' : provider.id === 'pagespeed_insights' ? ' Run mobile audit' : ' Check field data'}</button>
                     : isGoogle ? <div className="saas-provider-actions">
                       {!connected ? <button className="saas-btn primary" disabled={busy} onClick={() => void connectGoogle(provider.id)}>{busy ? <LoaderCircle className="saas-spin" size={15} /> : <Plug size={15} />} Connect with Google</button>
                         : <>
