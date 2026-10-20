@@ -1,13 +1,13 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const URL = Deno.env.get("SUPABASE_URL") || "";
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const ANON = Deno.env.get("SUPABASE_ANON_KEY") || "";
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID") || "";
 const CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET") || "";
 const ENCRYPTION_KEY = Deno.env.get("OAUTH_TOKEN_ENCRYPTION_KEY") || "";
-const REDIRECT_URI = Deno.env.get("GOOGLE_OAUTH_REDIRECT_URI") || (URL + "/functions/v1/google-oauth");
+const REDIRECT_URI = Deno.env.get("GOOGLE_OAUTH_REDIRECT_URI") || (SUPABASE_URL + "/functions/v1/google-oauth");
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const providers = ["google_search_console","google_analytics_4","google_business_profile","google_sheets"] as const;
 type Provider = typeof providers[number];
@@ -17,7 +17,7 @@ const scopes: Record<Provider,string[]> = {
   google_business_profile:["https://www.googleapis.com/auth/business.manage"],
   google_sheets:["https://www.googleapis.com/auth/spreadsheets.readonly"],
 };
-const admin = URL && SERVICE ? createClient(URL,SERVICE,{auth:{persistSession:false,autoRefreshToken:false}}) : null;
+const admin = SUPABASE_URL && SERVICE ? createClient(SUPABASE_URL,SERVICE,{auth:{persistSession:false,autoRefreshToken:false}}) : null;
 
 function cors(req:Request){return {"Access-Control-Allow-Origin":req.headers.get("origin")||"*","Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type","Access-Control-Allow-Methods":"GET, POST, OPTIONS","Vary":"Origin"};}
 function reply(req:Request,data:unknown,status=200){return new Response(JSON.stringify(data),{status,headers:{...cors(req),"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}});}
@@ -32,7 +32,7 @@ async function decrypt(ciphertext:string,iv:string){const k=await key();const pl
 function missingSetup(){const missing=[];if(!CLIENT_ID)missing.push("GOOGLE_CLIENT_ID");if(!CLIENT_SECRET)missing.push("GOOGLE_CLIENT_SECRET");if(!ENCRYPTION_KEY)missing.push("OAUTH_TOKEN_ENCRYPTION_KEY");return missing;}
 function redirectApp(origin:string,status:string,provider:string,message?:string){const u=new URL("/",origin);u.searchParams.set("google_oauth",status);u.searchParams.set("provider",provider);if(message)u.searchParams.set("message",message.slice(0,220));return Response.redirect(u.toString(),303);}
 async function api(url:string,token:string,init?:RequestInit){const r=await fetch(url,{...init,headers:{Authorization:"Bearer "+token,...(init?.headers||{})}});const text=await r.text();let data:Record<string,unknown>={};try{data=text?JSON.parse(text):{};}catch{data={message:text};}if(!r.ok){const e=data.error&&typeof data.error==="object"?data.error as Record<string,unknown>:data;throw new Error("Google API ("+r.status+"): "+msg(e.message||e.error_description||"Request rejected. Enable the API and confirm Google account permissions."));}return data;}
-async function getUser(req:Request){const h=req.headers.get("authorization")||"";const m=h.match(/^Bearer\s+(.+)$/i);if(!m||!URL||!ANON)throw new Error("Sign in to LocalPulse before connecting Google.");const c=createClient(URL,ANON,{auth:{persistSession:false,autoRefreshToken:false},global:{headers:{Authorization:"Bearer "+m[1]}}});const {data,error}=await c.auth.getUser(m[1]);if(error||!data.user)throw new Error("Your LocalPulse session has expired. Sign in again.");return data.user;}
+async function getUser(req:Request){const h=req.headers.get("authorization")||"";const m=h.match(/^Bearer\s+(.+)$/i);if(!m||!SUPABASE_URL||!ANON)throw new Error("Sign in to LocalPulse before connecting Google.");const c=createClient(SUPABASE_URL,ANON,{auth:{persistSession:false,autoRefreshToken:false},global:{headers:{Authorization:"Bearer "+m[1]}}});const {data,error}=await c.auth.getUser(m[1]);if(error||!data.user)throw new Error("Your LocalPulse session has expired. Sign in again.");return data.user;}
 async function membership(userId:string,ws:string){if(!admin)throw new Error("Supabase server configuration is missing.");const {data,error}=await admin.from("workspace_members").select("role").eq("workspace_id",ws).eq("user_id",userId).maybeSingle();if(error||!data)throw new Error("You do not have access to this workspace.");if(data.role==="viewer")throw new Error("Your workspace role is view-only. Ask an owner or admin to connect data sources.");}
 async function getCredential(integrationId:string,ws:string,p:Provider){if(!admin)throw new Error("Supabase server configuration is missing.");const {data,error}=await admin.from("integration_credentials").select("*").eq("integration_id",integrationId).eq("workspace_id",ws).eq("provider",p).maybeSingle();if(error||!data)throw new Error("No encrypted Google token was found. Reconnect this account.");let t:Record<string,unknown>;try{t=await decrypt(data.token_ciphertext,data.token_iv);}catch{throw new Error("Google token could not be decrypted. Check the encryption secret and reconnect if it was rotated.");}
   if(!t.access_token||new Date(data.token_expires_at||0).getTime()<Date.now()+60000){if(!t.refresh_token)throw new Error("Google authorization expired. Reconnect this account.");const r=await fetch(TOKEN_URL,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({client_id:CLIENT_ID,client_secret:CLIENT_SECRET,refresh_token:String(t.refresh_token),grant_type:"refresh_token"})});const txt=await r.text();let fresh:Record<string,unknown>={};try{fresh=txt?JSON.parse(txt):{};}catch{}if(!r.ok||!fresh.access_token)throw new Error("Google token refresh failed. Reconnect this account in Data Sources.");t={...t,...fresh,refresh_token:t.refresh_token};const enc=await encrypt(t);const up=await admin.from("integration_credentials").update({token_ciphertext:enc.token_ciphertext,token_iv:enc.token_iv,token_expires_at:new Date(Date.now()+Number(fresh.expires_in||3600)*1000).toISOString(),refresh_token_present:Boolean(t.refresh_token),updated_at:new Date().toISOString()}).eq("integration_id",integrationId);if(up.error)throw new Error("Could not securely store refreshed Google credentials.");}
