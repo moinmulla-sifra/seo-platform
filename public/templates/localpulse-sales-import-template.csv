@@ -1,0 +1,3 @@
+order_id,order_date,status,record_type,product_service,revenue_amount,source_channel
+STORE-1001,2026-10-16,Completed,Product sale,Sample laptop,24999,Walk-in
+STORE-1002,2026-10-17,Pending,Repair / service,Sample repair,1200,Website form
