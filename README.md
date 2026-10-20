@@ -27,7 +27,7 @@ npm run dev
 The app now defaults to authenticated SaaS mode. The shared LocalPulse Supabase URL and publishable key are configured as browser-safe defaults in `src/lib/supabase.ts` and documented in `.env.example`; override them using environment variables only when using a separate staging/development project.
 
 1. Run `npm install` and `npm run dev`, or deploy the `main` branch to a static host.
-2. Apply the SQL migrations in `supabase/migrations/` to the intended Supabase project (migrations 001–004 were applied to the connected `seo-platform` project in the `friday` organization).
+2. Apply the SQL migrations in `supabase/migrations/` to the intended Supabase project (migrations 001–005 were applied to the connected `seo-platform` project in the `friday` organization).
 3. Enable email/password auth in Supabase Auth, configure the Site URL and allowed redirect URLs for local development and the deployed domain, and verify the email confirmation flow.
 4. The normal root URL opens sign-in/create-account. Use `/?demo=1` to opt into the demo preview.
 5. When deploying, confirm that any pre-existing `VITE_LOCALPULSE_MODE=demo` build variable is removed; production builds default to the SaaS flow.
