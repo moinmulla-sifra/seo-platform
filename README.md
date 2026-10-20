@@ -7,7 +7,8 @@ LocalPulse helps local businesses review recorded sales, leads, authorized SEO m
 - **Demo preview:** the original polished eight-screen demo remains available when `VITE_LOCALPULSE_MODE` is unset or set to `demo`. All seeded metrics are fictional and labelled as demo.
 - **Authenticated workspace mode:** added in the `implementation/secure-mvp` branch. It includes Supabase Auth sign-in/sign-up/reset, user-owned workspaces, a business profile, workspace-scoped reads, persisted CSV/Excel sales imports with mapping/validation/history, sales and revenue KPIs from recorded orders only, enquiry entry, keyword entry, persisted checklist tasks, settings, CSV exports and honest disconnected-provider states.
 - **Database security:** migrations provide workspace membership, RLS policies and provenance guardrails. They must be applied to the intended Supabase project and tested before production launch.
-- **Not yet implemented:** Google OAuth/callback/token refresh/scheduled sync, live Search Console/GA4/Business Profile APIs, Google Sheets sync, a crawler/audit engine, review syncing/posting, third-party local-rank grids, email notifications, team invitations, subscription enforcement, Dodo Payments and final production deployment.
+- **Google integration code:** an Edge Function now implements OAuth state/callback handling, encrypted refresh-token storage, token refresh, authorized resource selection and manual sync for Search Console, GA4, Business Profile and read-only Google Sheets. It is deployed to Supabase, but Google OAuth cannot complete until the three server secrets below are configured and the Google Cloud APIs/OAuth client are ready.
+- **Still not implemented:** scheduled/background provider sync, a crawler/audit engine, review syncing/posting, third-party local-rank grids, email notifications, team invitations, subscription enforcement, Dodo Payments and final production deployment.
 
 Do not advertise a Google connector as working until its OAuth flow, provider calls, storage, sync jobs and failure handling have passed an end-to-end test.
 
@@ -23,7 +24,7 @@ npm run dev
 The app now defaults to authenticated SaaS mode. The shared LocalPulse Supabase URL and publishable key are configured as browser-safe defaults in `src/lib/supabase.ts` and documented in `.env.example`; override them using environment variables only when using a separate staging/development project.
 
 1. Run `npm install` and `npm run dev`, or deploy the `main` branch to a static host.
-2. Apply the SQL migrations in `supabase/migrations/` to the intended Supabase project (migrations 001–003 were applied to the connected `seo-platform` project in the `friday` organization).
+2. Apply the SQL migrations in `supabase/migrations/` to the intended Supabase project (migrations 001–004 were applied to the connected `seo-platform` project in the `friday` organization).
 3. Enable email/password auth in Supabase Auth, configure the Site URL and allowed redirect URLs for local development and the deployed domain, and verify the email confirmation flow.
 4. The normal root URL opens sign-in/create-account. Use `/?demo=1` to opt into the demo preview.
 5. When deploying, confirm that any pre-existing `VITE_LOCALPULSE_MODE=demo` build variable is removed; production builds default to the SaaS flow.
@@ -84,14 +85,43 @@ The first three migrations have been applied successfully to the accessible, new
 
 The migrations are a security-focused starter, not a certification or substitute for a production review.
 
-## Environment and service configuration
+## ## Google OAuth setup (required before Connect with Google can finish)
 
-See `.env.example`. The Supabase URL and publishable key used by the shared SaaS project are public browser configuration, not secret credentials; Row Level Security is the security boundary. Google OAuth client secrets, refresh tokens and Dodo API credentials are server-side secrets and are intentionally not included.
+The OAuth handler is deployed as Supabase Edge Function `google-oauth` at:
+
+`https://qrmglpizfjaoumbejcww.supabase.co/functions/v1/google-oauth`
+
+Register that **exact URL** as an Authorized redirect URI on a Google Cloud OAuth Client ID whose application type is **Web application**. The callback exchanges the one-time authorization code on the server; Google passwords and tokens are never exposed to the browser. Official setup guide: [Google OAuth web-server flow](https://developers.google.com/identity/protocols/oauth2/web-server).
+
+### One-time administrator setup
+
+1. In Google Cloud Console, choose/create the platform's Google Cloud project, configure its OAuth consent screen, and create a Web application OAuth client. If the consent screen is in Testing mode, add the relevant Google accounts as test users.
+2. Enable the APIs used by your plan: **Google Search Console API**, **Google Analytics Data API**, **Google Analytics Admin API**, and **Google Sheets API**. For Google Business Profile, request/enable the supported Business Profile APIs and confirm the project has API access; some accounts/projects can have zero quota until access is approved. See [Business Profile API setup](https://developers.google.com/my-business/content/basic-setup).
+3. In the Supabase dashboard for the `seo-platform` project, open **Edge Functions → Secrets** and add:
+   - `GOOGLE_CLIENT_ID` — the Web application's OAuth client ID.
+   - `GOOGLE_CLIENT_SECRET` — the secret from that same OAuth client.
+   - `OAUTH_TOKEN_ENCRYPTION_KEY` — a Base64 string that decodes to exactly 32 random bytes. Generate one locally with PowerShell:
+     ```powershell
+     [byte[]]$bytes = New-Object byte[] 32
+     [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+     [Convert]::ToBase64String($bytes)
+     ```
+   - Optional: `GOOGLE_OAUTH_REDIRECT_URI` — only set this if you need to override the callback URL above; it must match the Google Cloud redirect URI byte-for-byte.
+4. Keep all three required values in Supabase server-side secrets. **Never paste the client secret or encryption key into GitHub, frontend environment variables, or chat.** The encryption key protects stored OAuth access/refresh tokens with AES-GCM.
+5. Return to LocalPulse → Data Sources → Connect with Google. Choose the authorized site/property/location, then select **Sync now**. The connector only reports a successful connection after OAuth succeeds; it only reports data after an API call and database write succeed.
+
+### Supported live data flows in this build
+
+- **Google Search Console:** list authorized Search Console properties; manually sync daily clicks, impressions, CTR, average position and query/page keyword snapshots.
+- **Google Analytics 4:** list accessible GA4 properties; manually sync sessions by date.
+- **Google Business Profile:** list authorized locations; manually sync supported search/maps impressions, call clicks, website clicks and direction requests. API access/quota is controlled by Google.
+- **Google Sheets:** authorize read-only access; paste a spreadsheet URL/ID and manually import rows using headers for Order ID, Order date, Status and Revenue amount. The first version accepts up to 1,000 rows per sync and reports rejected duplicates/invalid rows in import history.
+- All integrations use a one-time OAuth state, least-privilege provider scopes, server-side encrypted tokens and refresh-token handling. No Google credential is stored in a Vite/browser variable.
 
 ## Current limitations / known gaps
 
-- Google connections are not operational in this branch. The setup action clearly says no OAuth flow was attempted.
-- No scheduled job is currently refreshing provider data; no sync interval is implied.
+- The OAuth flow is deployed but still requires the Google Cloud client and the three Supabase Edge Function secrets above before the provider buttons can complete authorization.
+- Sync is currently manual; no background schedule or automatic periodic refresh is enabled.
 - No local business directory scan or rank-grid tracker is present.
 - Email authentication behavior depends on the email confirmation policy configured in Supabase Auth.
 - Dodo Payments is not integrated; pricing/subscriptions are not enforced.
