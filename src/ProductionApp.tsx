@@ -30,7 +30,18 @@ type LocalMetric = { id: string; metric_date: string; provider: string; metric_t
 type Review = { id: string; provider: string; reviewer_display_name: string | null; rating: number | null; review_text: string | null; review_date: string | null; response_status: string; is_demo: boolean };
 type Task = { id: string; title: string; description: string | null; priority: 'low' | 'medium' | 'high'; category: string | null; status: string; is_demo: boolean };
 type Keyword = { id: string; keyword: string; intent: string | null; search_location: string | null; device: string | null; landing_page: string | null; tracker_provider: string; is_demo: boolean };
-type Integration = { id: string; provider: string; status: string; last_sync_at: string | null; last_error_message: string | null };
+type Integration = {
+  id: string; workspace_id?: string; business_id?: string | null; provider: string; status: string;
+  account_label?: string | null; external_property_id?: string | null; approved_scopes?: string[];
+  public_config?: Record<string, unknown> | null; last_sync_at: string | null;
+  last_error_code?: string | null; last_error_message: string | null;
+};
+type GoogleResource = { id: string; title: string; detail?: string };
+type PropertyPicker = {
+  provider: string; integrationId: string; resources: GoogleResource[];
+  selectedId: string; spreadsheetId: string; loading: boolean; saving: boolean;
+};
+type GoogleSetupInfo = { missingSecrets: string[]; redirectUri: string; message: string } | null;
 type ImportRun = { id: string; file_name: string; created_at: string; row_count: number; accepted_count: number; rejected_count: number; status: string };
 type ImportField = 'id' | 'date' | 'status' | 'type' | 'product' | 'amount' | 'channel';
 type ImportMapping = Record<ImportField, string>;
@@ -136,6 +147,10 @@ function normalizedStatus(raw: unknown): Order['status'] | null {
 function statusLabel(status: string) {
   return status.replace(/_/g, ' ').replace(/\b\w/g, s => s.toUpperCase());
 }
+function providerPickerLabel(providerId: string, selected: boolean) {
+  if (providerId === 'google_sheets') return selected ? 'Change spreadsheet' : 'Select spreadsheet';
+  return selected ? 'Change property' : 'Choose property';
+}
 function providerName(provider: string) {
   const found = providers.find(p => p.id === provider);
   return found ? found.name : provider.replace(/_/g, ' ');
@@ -206,6 +221,9 @@ export default function ProductionApp() {
   const [keywordLocation, setKeywordLocation] = useState('Dharwad, Karnataka');
   const [leadForm, setLeadForm] = useState({ interest: '', source: 'Walk-in' });
   const [showLeadForm, setShowLeadForm] = useState(false);
+  const [oauthBusyProvider, setOauthBusyProvider] = useState<string | null>(null);
+  const [propertyPicker, setPropertyPicker] = useState<PropertyPicker | null>(null);
+  const [googleSetupInfo, setGoogleSetupInfo] = useState<GoogleSetupInfo>(null);
 
   const notify = (text: string, tone: 'success' | 'error' | 'info' = 'info') => setToast({ text, tone });
   const activeWorkspace = memberships.find(w => w.id === activeWorkspaceId) || null;
@@ -348,6 +366,23 @@ export default function ProductionApp() {
     const timer = window.setTimeout(() => setToast(null), 4200);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get('google_oauth');
+    if (!result) return;
+    const provider = params.get('provider') || 'Google';
+    const message = params.get('message');
+    setPage('sources');
+    if (result === 'success') {
+      notify(message || 'Google authorization succeeded. Choose a property and run your first sync.', 'success');
+      void refreshAfterOAuth();
+    } else {
+      notify(message || 'Google authorization did not complete. Check the setup details and try again.', 'error');
+    }
+    window.history.replaceState({}, document.title, window.location.pathname);
+    void provider;
+  }, []);
 
   const signOut = async () => {
     if (!client) return;
@@ -506,6 +541,153 @@ export default function ProductionApp() {
     setLocalMetrics((localRows.data || []) as LocalMetric[]);
     setReviews((reviewRows.data || []) as Review[]);
     setIntegrations((integrationRows.data || []) as Integration[]);
+  };
+
+  const invokeGoogle = async (body: Record<string, unknown>) => {
+    if (!client) throw new Error('Supabase is not configured.');
+    const { data, error } = await client.functions.invoke('google-oauth', { body });
+    if (error) {
+      let message = error.message || 'Google integration request failed.';
+      const context = (error as unknown as { context?: Response }).context;
+      if (context && typeof context.json === 'function') {
+        try {
+          const detail = await context.json() as { error?: string; message?: string };
+          if (detail.error || detail.message) message = detail.error || detail.message || message;
+        } catch { /* Keep the SDK message if the response was not JSON. */ }
+      }
+      throw new Error(message);
+    }
+    return (data || {}) as Record<string, unknown>;
+  };
+
+  const refreshAfterOAuth = async () => {
+    if (!client || !activeWorkspaceId) return;
+    try { await refreshDataOnly(); } catch { /* The main loader will show any workspace query error. */ }
+  };
+
+  const connectGoogle = async (providerId: string) => {
+    if (!client || !activeWorkspaceId) return;
+    setOauthBusyProvider(providerId);
+    setGoogleSetupInfo(null);
+    setPropertyPicker(null);
+    try {
+      const result = await invokeGoogle({
+        action: 'start', provider: providerId, workspaceId: activeWorkspaceId,
+        businessId: businessId || null, returnOrigin: window.location.origin,
+      });
+      if (result.setupRequired) {
+        const missing = Array.isArray(result.missingSecrets) ? result.missingSecrets.map(String) : [];
+        const uri = String(result.redirectUri || '');
+        setGoogleSetupInfo({
+          missingSecrets: missing, redirectUri: uri,
+          message: String(result.error || 'Google OAuth needs one-time server configuration.'),
+        });
+        notify('One-time Google OAuth setup is required. See the setup instructions above the connector cards.', 'error');
+        return;
+      }
+      if (result.error) throw new Error(String(result.error));
+      const authUrl = String(result.authorizationUrl || '');
+      if (!authUrl.startsWith('https://accounts.google.com/')) throw new Error('The server did not return a valid Google authorization URL.');
+      window.location.assign(authUrl);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Could not start Google authorization.', 'error');
+    } finally {
+      setOauthBusyProvider(current => current === providerId ? null : current);
+    }
+  };
+
+  const openPropertyPicker = async (providerId: string, integration: Integration) => {
+    if (!client || !activeWorkspaceId) return;
+    if (providerId === 'google_sheets') {
+      setPropertyPicker({
+        provider: providerId, integrationId: integration.id, resources: [],
+        selectedId: '', spreadsheetId: '', loading: false, saving: false,
+      });
+      return;
+    }
+    setPropertyPicker({
+      provider: providerId, integrationId: integration.id, resources: [],
+      selectedId: '', spreadsheetId: '', loading: true, saving: false,
+    });
+    try {
+      const result = await invokeGoogle({
+        action: 'resources', provider: providerId, integrationId: integration.id,
+        workspaceId: activeWorkspaceId, businessId: businessId || null,
+      });
+      if (result.error) throw new Error(String(result.error));
+      const resources = Array.isArray(result.resources) ? result.resources as GoogleResource[] : [];
+      setPropertyPicker(current => current?.integrationId === integration.id
+        ? { ...current, resources, selectedId: resources[0]?.id || '', loading: false }
+        : current);
+      if (!resources.length) notify('No accessible properties were returned. Check that this Google account has access and the required API is enabled.', 'info');
+    } catch (error) {
+      setPropertyPicker(null);
+      notify(error instanceof Error ? error.message : 'Could not list Google properties.', 'error');
+    }
+  };
+
+  const saveGoogleProperty = async () => {
+    if (!propertyPicker || !activeWorkspaceId) return;
+    const resourceId = propertyPicker.provider === 'google_sheets'
+      ? propertyPicker.spreadsheetId.trim()
+      : propertyPicker.selectedId;
+    if (!resourceId) { notify(propertyPicker.provider === 'google_sheets' ? 'Paste the Google Sheets spreadsheet ID or URL.' : 'Choose a Google property first.', 'error'); return; }
+    setPropertyPicker(current => current ? { ...current, saving: true } : current);
+    try {
+      const result = await invokeGoogle({
+        action: 'select_resource', provider: propertyPicker.provider,
+        integrationId: propertyPicker.integrationId, workspaceId: activeWorkspaceId,
+        businessId: businessId || null, resourceId,
+      });
+      if (result.error) throw new Error(String(result.error));
+      setPropertyPicker(null);
+      await refreshDataOnly();
+      notify('Google property saved. Run Sync now to import its available data.', 'success');
+    } catch (error) {
+      setPropertyPicker(current => current ? { ...current, saving: false } : current);
+      notify(error instanceof Error ? error.message : 'Could not save the selected Google property.', 'error');
+    }
+  };
+
+  const syncGoogle = async (providerId: string, integration: Integration) => {
+    if (!client || !activeWorkspaceId) return;
+    const busyKey = providerId + ':sync';
+    setOauthBusyProvider(busyKey);
+    try {
+      const result = await invokeGoogle({
+        action: 'sync', provider: providerId, integrationId: integration.id,
+        workspaceId: activeWorkspaceId, businessId: businessId || null,
+      });
+      if (result.error) throw new Error(String(result.error));
+      const summary = result.summary as { rowsSeen?: number; rowsWritten?: number } | undefined;
+      await refreshDataOnly();
+      notify('Sync completed. ' + Number(summary?.rowsWritten || 0).toLocaleString('en-IN') + ' records saved from ' + providerName(providerId) + '.', 'success');
+    } catch (error) {
+      try { await refreshDataOnly(); } catch { /* Keep original provider error visible. */ }
+      notify(error instanceof Error ? error.message : 'Google sync failed.', 'error');
+    } finally {
+      setOauthBusyProvider(current => current === busyKey ? null : current);
+    }
+  };
+
+  const disconnectGoogle = async (providerId: string, integration: Integration) => {
+    if (!client || !activeWorkspaceId) return;
+    const confirmed = window.confirm('Disconnect ' + providerName(providerId) + ' from this workspace? Stored OAuth tokens will be deleted.');
+    if (!confirmed) return;
+    setOauthBusyProvider(providerId + ':disconnect');
+    try {
+      const result = await invokeGoogle({
+        action: 'disconnect', provider: providerId, integrationId: integration.id,
+        workspaceId: activeWorkspaceId,
+      });
+      if (result.error) throw new Error(String(result.error));
+      await refreshDataOnly();
+      notify(providerName(providerId) + ' has been disconnected.', 'success');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Could not disconnect provider.', 'error');
+    } finally {
+      setOauthBusyProvider(current => current === providerId + ':disconnect' ? null : current);
+    }
   };
 
   const handleToggleTask = async (task: Task) => {
@@ -764,13 +946,64 @@ export default function ProductionApp() {
           ) : null}
 
           {page === 'sources' ? (
-            <div className="saas-integrations-grid">{providers.map(provider => {
-              const source = integrations.filter(row => row.provider === provider.id).sort((a, b) => String(b.last_sync_at || '').localeCompare(String(a.last_sync_at || '')))[0];
-              const status = provider.id === 'csv_import' ? 'Available' : (source?.status === 'connected' ? 'Connected' : (source?.status === 'error' ? 'Error' : 'Not connected'));
-              const icon = provider.id.indexOf('google') === 0 ? Globe2 : provider.id === 'csv_import' ? FileSpreadsheet : Database;
-              const ProviderIcon = icon;
-              return <section className="saas-card saas-provider-card" key={provider.id}><div className="saas-provider-top"><span className="saas-provider-icon"><ProviderIcon size={21} /></span><span className={'saas-status ' + (status === 'Connected' || status === 'Available' ? 'connected' : 'disconnected')}>{status}</span></div><h2>{provider.name}</h2><p className="saas-provider-detail">{provider.detail}</p><p className="saas-provider-copy">{provider.supported}</p><div className="saas-scope"><b>Access / setup</b><span>{provider.scope}</span></div><div className="saas-provider-sync"><span>Last synced</span><b>{status === 'Connected' ? formatDateTime(source?.last_sync_at) : provider.id === 'csv_import' ? 'On each confirmed import' : 'Never'}</b></div>{source?.last_error_message ? <p className="saas-error-copy">{source.last_error_message}</p> : null}<button className={'saas-btn ' + (provider.id === 'csv_import' ? 'primary' : 'secondary')} onClick={() => provider.id === 'csv_import' ? beginImport() : notify(provider.id === 'google_search_console' || provider.id === 'google_analytics_4' || provider.id === 'google_business_profile' || provider.id === 'google_sheets' ? 'OAuth is not configured yet. No connection was attempted and no connected state was created.' : 'This connector is not implemented. Choose a provider and configure its API securely before enabling it.', 'info')}>{provider.id === 'csv_import' ? <><Upload size={15} /> Import file</> : status === 'Connected' ? 'View connection details' : 'Setup not configured'}</button></section>;
-            })}</div>
+            <>
+              {googleSetupInfo ? <section className="saas-card saas-google-setup">
+                <div className="saas-card-header"><div><h2>One-time Google OAuth setup</h2><p>{googleSetupInfo.message}</p></div><button className="saas-icon-btn" onClick={() => setGoogleSetupInfo(null)} aria-label="Dismiss setup guide"><X size={17} /></button></div>
+                <p className="saas-muted">Add these values in Supabase Project → Edge Functions → Secrets. Do not paste private values into GitHub or this chat.</p>
+                <div className="saas-table-wrap"><table className="saas-table"><thead><tr><th>Server secret</th><th>What it is</th></tr></thead><tbody>
+                  {googleSetupInfo.missingSecrets.map(secret => <tr key={secret}><td><b>{secret}</b></td><td>{secret === 'GOOGLE_CLIENT_ID' ? 'The OAuth Client ID from your Google Cloud Web application.' : secret === 'GOOGLE_CLIENT_SECRET' ? 'The private client secret from the same Google Cloud OAuth client.' : 'A random Base64 key that decodes to exactly 32 bytes, used to encrypt stored refresh tokens.'}</td></tr>)}
+                </tbody></table></div>
+                <div className="saas-redirect-line"><div><b>Authorized redirect URI</b><code>{googleSetupInfo.redirectUri}</code></div><button className="saas-btn secondary" onClick={() => { void navigator.clipboard.writeText(googleSetupInfo.redirectUri).then(() => notify('Redirect URI copied.', 'success')).catch(() => notify('Copy failed. Select and copy the redirect URI shown above.', 'error')); }}><ArrowDownToLine size={14} /> Copy URI</button></div>
+                <ol className="saas-google-steps">
+                  <li>Create a Google Cloud OAuth client of type <b>Web application</b> and add the exact redirect URI above.</li>
+                  <li>Enable the Search Console API, Google Analytics Data API and Analytics Admin API. For Google Business Profile, request/enable the required Business Profile APIs and API access first.</li>
+                  <li>Add the three missing server secrets above in Supabase, then retry Connect with Google.</li>
+                </ol>
+                <p className="saas-footnote">OAuth secrets stay server-side. Customers authenticate on Google and grant selected read-only access; LocalPulse never asks for their Google password.</p>
+              </section> : null}
+              <div className="saas-integrations-grid">{providers.map(provider => {
+                const source = integrations.filter(row => row.provider === provider.id).sort((a, b) => String(b.last_sync_at || '').localeCompare(String(a.last_sync_at || '')))[0];
+                const isGoogle = ['google_search_console','google_analytics_4','google_business_profile','google_sheets'].includes(provider.id);
+                const connected = source?.status === 'connected';
+                const selected = Boolean(source?.external_property_id && source.external_property_id !== '__resource_pending__');
+                const status = provider.id === 'csv_import' ? 'Available'
+                  : connected ? (selected ? 'Connected' : 'Choose property')
+                  : source?.status === 'pending' ? 'Authorization pending'
+                  : source?.status === 'error' ? 'Needs attention' : 'Not connected';
+                const icon = provider.id.indexOf('google') === 0 ? Globe2 : provider.id === 'csv_import' ? FileSpreadsheet : Database;
+                const ProviderIcon = icon;
+                const pickerOpen = Boolean(propertyPicker && source && propertyPicker.integrationId === source.id);
+                const busy = oauthBusyProvider === provider.id || oauthBusyProvider === provider.id + ':sync' || oauthBusyProvider === provider.id + ':disconnect';
+                const cfg = source?.public_config || {};
+                const selectedTitle = typeof cfg.selected_resource_title === 'string' ? cfg.selected_resource_title : '';
+                return <section className="saas-card saas-provider-card" key={provider.id}>
+                  <div className="saas-provider-top"><span className="saas-provider-icon"><ProviderIcon size={21} /></span><span className={'saas-status ' + ((status === 'Connected' || status === 'Available') ? 'connected' : 'disconnected')}>{status}</span></div>
+                  <h2>{provider.name}</h2><p className="saas-provider-detail">{provider.detail}</p><p className="saas-provider-copy">{provider.supported}</p>
+                  <div className="saas-scope"><b>Access / setup</b><span>{provider.scope}</span></div>
+                  {connected ? <div className="saas-connection-account"><span>Google account</span><b>{source?.account_label || 'Authorized Google account'}</b>{selected ? <small>Property: {selectedTitle || source?.external_property_id}</small> : <small>Authorization saved. Select the correct property before syncing.</small>}</div> : null}
+                  <div className="saas-provider-sync"><span>Last synced</span><b>{connected ? formatDateTime(source?.last_sync_at) : provider.id === 'csv_import' ? 'On each confirmed import' : 'Never'}</b></div>
+                  {source?.last_error_message ? <p className="saas-error-copy">{source.last_error_message}</p> : null}
+                  {provider.id === 'csv_import' ? <button className="saas-btn primary" onClick={beginImport}><Upload size={15} /> Import file</button>
+                    : isGoogle ? <div className="saas-provider-actions">
+                      {!connected ? <button className="saas-btn primary" disabled={busy} onClick={() => void connectGoogle(provider.id)}>{busy ? <LoaderCircle className="saas-spin" size={15} /> : <Plug size={15} />} Connect with Google</button>
+                        : <>
+                          <button className="saas-btn secondary" disabled={busy} onClick={() => void openPropertyPicker(provider.id, source!)}>{providerPickerLabel(provider.id, selected)}</button>
+                          <button className="saas-btn primary" disabled={busy || !selected} onClick={() => void syncGoogle(provider.id, source!)}>{oauthBusyProvider === provider.id + ':sync' ? <LoaderCircle className="saas-spin" size={15} /> : <RefreshCw size={15} />} Sync now</button>
+                          <button className="saas-disconnect-btn" disabled={busy} onClick={() => void disconnectGoogle(provider.id, source!)}>Disconnect</button>
+                        </>}
+                    </div>
+                    : <button className="saas-btn secondary" onClick={() => notify('This connector is not implemented yet. No connection was attempted.', 'info')}>Not available yet</button>}
+                  {pickerOpen && propertyPicker ? <div className="saas-property-picker">
+                    <div><b>{provider.id === 'google_sheets' ? 'Choose a spreadsheet' : 'Choose a property / location'}</b><button className="saas-icon-btn" onClick={() => setPropertyPicker(null)} aria-label="Close property picker"><X size={15} /></button></div>
+                    {propertyPicker.loading ? <p className="saas-muted"><LoaderCircle className="saas-spin" size={14} /> Loading resources from Google…</p>
+                      : provider.id === 'google_sheets' ? <label>Google Sheets URL or spreadsheet ID<input value={propertyPicker.spreadsheetId} onChange={e => setPropertyPicker(current => current ? {...current,spreadsheetId:e.target.value} : current)} placeholder="Paste spreadsheet URL or ID" /></label>
+                      : propertyPicker.resources.length ? <label>Available resources<select value={propertyPicker.selectedId} onChange={e => setPropertyPicker(current => current ? {...current,selectedId:e.target.value} : current)}>{propertyPicker.resources.map(resource => <option key={resource.id} value={resource.id}>{resource.title}{resource.detail ? ' — '+resource.detail : ''}</option>)}</select></label>
+                      : <p className="saas-muted">Google returned no accessible resources for this account.</p>}
+                    <button className="saas-btn primary" disabled={propertyPicker.loading || propertyPicker.saving || (provider.id === 'google_sheets' ? !propertyPicker.spreadsheetId.trim() : !propertyPicker.selectedId)} onClick={() => void saveGoogleProperty()}>{propertyPicker.saving ? <LoaderCircle className="saas-spin" size={15} /> : <CheckCircle2 size={15} />} Save property</button>
+                  </div> : null}
+                </section>;
+              })}</div>
+            </>
           ) : null}
 
           {page === 'settings' ? (
