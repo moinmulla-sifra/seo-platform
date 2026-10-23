@@ -435,6 +435,7 @@ export default function ProductionApp() {
         client.from('integrations').select('*').eq('workspace_id', activeWorkspaceId).order('created_at', { ascending: false }),
         client.from('sales_imports').select('*').eq('workspace_id', activeWorkspaceId).order('created_at', { ascending: false }).limit(50),
         client.from('keyword_snapshots').select('*').eq('workspace_id', activeWorkspaceId).eq('is_demo', false).order('captured_at', { ascending: false }).limit(2000),
+        client.from('website_performance_audits').select('*').eq('workspace_id', activeWorkspaceId).order('created_at', { ascending: false }).limit(50),
       ]);
       if (!alive) return;
       const fatal = result.find(item => item.error);
@@ -452,6 +453,8 @@ export default function ProductionApp() {
       setTasks((result[6].data || []) as Task[]);
       setKeywords((result[7].data || []) as Keyword[]);
       setKeywordSnapshots((result[10].data || []) as KeywordSnapshot[]);
+      if (result[11].error) throw result[11].error;
+      setWebsiteAudits((result[11].data || []) as unknown as WebsiteAudit[]);
       setIntegrations((result[8].data || []) as Integration[]);
       setImportRuns((result[9].data || []) as ImportRun[]);
       setCurrencyForm(activeWorkspace?.currency || 'INR');
