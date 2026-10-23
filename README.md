@@ -140,3 +140,12 @@ Register that **exact URL** as an Authorized redirect URI on a Google Cloud OAut
 - `src/lib/utils.ts` — shared demo utilities.
 - `src/production.css` — responsive authenticated SaaS UI.
 - `supabase/migrations/` — tenant schema and RLS policies.
+
+
+## Unified analytics & recommendations
+
+The authenticated application has workspace-level overview KPIs, a Search Opportunities view based on stored Search Console query snapshots, Site Health audit history/actions for PageSpeed Insights and Chrome UX Report, and an explainable Insights & Actions view. Recommendations use deterministic rules and show their evidence; thresholds are triage heuristics, not guaranteed ranking improvements.
+
+Search Console results may not include every query row and can omit anonymized queries. Average position is an aggregate metric, not a live rank check. CrUX requires an API key and eligible real-user data. PageSpeed results are on-demand lab audits and can vary between runs. These differences are called out in the UI.
+
+The new views read the existing `keyword_snapshots` and `website_performance_audits` tables and use workspace-scoped queries. They do not make planned connectors look operational, invent unavailable metrics, or claim attribution of revenue to SEO without conversion/campaign data.
