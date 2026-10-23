@@ -3,15 +3,15 @@ import type { User } from '@supabase/supabase-js';
 import {
   Activity, AlertCircle, ArrowDownToLine, ArrowRight, BarChart3, Building2,
   CheckCircle2, ChevronDown, CircleHelp, Clock3, Database, FileSpreadsheet,
-  Globe2, LayoutDashboard, LoaderCircle, LogOut, MapPin, Menu, MessageSquareText,
-  Plug, Plus, RefreshCw, Search, Settings2, ShieldCheck, ShoppingBag, Star,
+  Globe2, Gauge, LayoutDashboard, Lightbulb, LoaderCircle, LogOut, MapPin, Menu, MessageSquareText,
+  Plug, Plus, RefreshCw, Search, Settings2, ShieldCheck, ShoppingBag, Star, Target, TrendingUp,
   Upload, X, type LucideIcon
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 import './production.css';
 
-type PageId = 'overview' | 'seo' | 'local' | 'sales' | 'reviews' | 'reports' | 'sources' | 'settings';
+type PageId = 'overview' | 'seo' | 'opportunities' | 'site_health' | 'insights' | 'local' | 'sales' | 'reviews' | 'reports' | 'sources' | 'settings';
 type Workspace = { id: string; name: string; currency: string; timezone: string; role: string };
 type Business = {
   id: string; workspace_id: string; name: string; category: string | null; address: string | null;
@@ -30,6 +30,9 @@ type LocalMetric = { id: string; metric_date: string; provider: string; metric_t
 type Review = { id: string; provider: string; reviewer_display_name: string | null; rating: number | null; review_text: string | null; review_date: string | null; response_status: string; is_demo: boolean };
 type Task = { id: string; title: string; description: string | null; priority: 'low' | 'medium' | 'high'; category: string | null; status: string; is_demo: boolean };
 type Keyword = { id: string; keyword: string; intent: string | null; search_location: string | null; device: string | null; landing_page: string | null; tracker_provider: string; is_demo: boolean };
+type KeywordSnapshot = { id: string; workspace_id: string; keyword_id: string; captured_at: string; position: number | null; clicks: number | null; impressions: number | null; ctr: number | null; source_provider: string; source_location: string | null; device: string | null; is_demo: boolean };
+type SearchSnapshotView = KeywordSnapshot & { keyword: string; landing_page: string; search_location: string | null; intent: string | null; opportunity: string };
+type Insight = { id: string; priority: 'high' | 'medium' | 'low'; category: string; title: string; details: string; evidence: string; actionLabel: string; page: PageId };
 type Integration = {
   id: string; workspace_id?: string; business_id?: string | null; provider: string; status: string;
   account_label?: string | null; external_property_id?: string | null; approved_scopes?: string[];
@@ -64,8 +67,11 @@ type Toast = { text: string; tone: 'success' | 'error' | 'info' } | null;
 const nav: { id: PageId; title: string; icon: LucideIcon; group: string }[] = [
   { id: 'overview', title: 'Overview', icon: LayoutDashboard, group: 'WORKSPACE' },
   { id: 'seo', title: 'SEO performance', icon: Activity, group: 'WORKSPACE' },
+  { id: 'opportunities', title: 'Search opportunities', icon: Search, group: 'WORKSPACE' },
+  { id: 'site_health', title: 'Site health', icon: Gauge, group: 'WORKSPACE' },
   { id: 'local', title: 'Local SEO', icon: MapPin, group: 'WORKSPACE' },
   { id: 'sales', title: 'Leads & sales', icon: ShoppingBag, group: 'WORKSPACE' },
+  { id: 'insights', title: 'Insights & actions', icon: Lightbulb, group: 'GROWTH' },
   { id: 'reviews', title: 'Reviews', icon: MessageSquareText, group: 'GROWTH' },
   { id: 'reports', title: 'Reports', icon: BarChart3, group: 'GROWTH' },
   { id: 'sources', title: 'Data sources', icon: Plug, group: 'MANAGE' },
@@ -117,6 +123,9 @@ const providers: {
 const titles: Record<PageId, { title: string; subtitle: string }> = {
   overview: { title: 'Overview', subtitle: 'A reliable summary of the data this workspace has provided.' },
   seo: { title: 'SEO performance', subtitle: 'Search data is shown only after an authorized source has synced.' },
+  opportunities: { title: 'Search opportunities', subtitle: 'Use real Search Console query snapshots to prioritize pages and search terms.' },
+  site_health: { title: 'Site health', subtitle: 'Review measured website audit results, field data and audit history.' },
+  insights: { title: 'Insights & actions', subtitle: 'Evidence-based checks highlight what to inspect next using your connected workspace data.' },
   local: { title: 'Local SEO', subtitle: 'Manage business details without inventing profile insights or rankings.' },
   sales: { title: 'Leads & sales', subtitle: 'Revenue and orders come from imported or connected sales records only.' },
   reviews: { title: 'Reviews', subtitle: 'Authorized or imported review records appear here when available.' },
@@ -235,6 +244,7 @@ export default function ProductionApp() {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [keywords, setKeywords] = useState<Keyword[]>([]);
+  const [keywordSnapshots, setKeywordSnapshots] = useState<KeywordSnapshot[]>([]);
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [websiteAudits, setWebsiteAudits] = useState<WebsiteAudit[]>([]);
   const [auditBusyProvider, setAuditBusyProvider] = useState<string | null>(null);
@@ -304,6 +314,57 @@ export default function ProductionApp() {
   const businessMetrics: Record<string, number> = {};
   filteredLocalMetrics.forEach(row => { businessMetrics[row.metric_type] = (businessMetrics[row.metric_type] || 0) + Number(row.metric_value || 0); });
   const completedTaskCount = tasks.filter(task => task.status === 'done').length;
+  const openTasks = tasks.filter(task => !['done', 'completed', 'closed'].includes(String(task.status || '').toLowerCase()));
+  const reviewRatings = reviews.filter(review => review.rating !== null && Number.isFinite(Number(review.rating)));
+  const averageReviewRating = reviewRatings.length ? reviewRatings.reduce((sum, review) => sum + Number(review.rating || 0), 0) / reviewRatings.length : null;
+  const needsReplyCount = reviews.filter(review => String(review.response_status || '').toLowerCase() === 'needs_reply').length;
+  const localProfileActions = ['call_clicks', 'website_clicks', 'direction_requests'].reduce((sum, key) => sum + Number(businessMetrics[key] || 0), 0);
+  const hasLocalProfileActions = filteredLocalMetrics.some(row => ['call_clicks', 'website_clicks', 'direction_requests'].includes(row.metric_type));
+  const connectedSourceCount = sourceIntegrations.length;
+  const integrationProblems = integrations.filter(row => ['error', 'failed', 'needs_attention'].includes(String(row.status || '').toLowerCase()) || Boolean(row.last_error_message));
+  const auditsForBusiness = websiteAudits.filter(audit => activeBusiness ? audit.business_id === activeBusiness.id : false).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  const latestPageSpeedAudit = auditsForBusiness.find(audit => audit.provider === 'pagespeed_insights');
+  const latestCruxAudit = auditsForBusiness.find(audit => audit.provider === 'chrome_ux_report');
+  const keywordSnapshotViews = useMemo<SearchSnapshotView[]>(() => {
+    const latestByKeyword = new Map<string, KeywordSnapshot>();
+    [...keywordSnapshots].sort((a, b) => String(b.captured_at).localeCompare(String(a.captured_at))).forEach(snapshot => {
+      if (!latestByKeyword.has(snapshot.keyword_id)) latestByKeyword.set(snapshot.keyword_id, snapshot);
+    });
+    return Array.from(latestByKeyword.values()).map(snapshot => {
+      const keyword = keywords.find(item => item.id === snapshot.keyword_id);
+      const position = Number(snapshot.position || 0);
+      const impressions = Number(snapshot.impressions || 0);
+      const ctr = Number(snapshot.ctr || 0) * 100;
+      let opportunity = 'Monitor';
+      if (impressions >= 100 && position >= 4 && position <= 20 && ctr < 2.5) opportunity = 'Improve snippet CTR';
+      else if (impressions >= 100 && position > 8 && position <= 20) opportunity = 'Near page one';
+      else if (impressions >= 100 && position > 20) opportunity = 'Strengthen landing page';
+      else if (position > 0 && position <= 3) opportunity = 'Top performer';
+      return { ...snapshot, keyword: keyword?.keyword || 'Query unavailable', landing_page: keyword?.landing_page || '—', search_location: snapshot.source_location || keyword?.search_location || null, intent: keyword?.intent || null, opportunity };
+    }).sort((a, b) => Number(b.impressions || 0) - Number(a.impressions || 0));
+  }, [keywordSnapshots, keywords]);
+  const qualifiedSearchOpportunities = keywordSnapshotViews.filter(row => ['Improve snippet CTR', 'Near page one', 'Strengthen landing page'].includes(row.opportunity));
+  const insights = useMemo<Insight[]>(() => {
+    const items: Insight[] = [];
+    const gscConnected = integrations.some(row => row.provider === 'google_search_console' && row.status === 'connected');
+    const ga4Connected = integrations.some(row => row.provider === 'google_analytics_4' && row.status === 'connected');
+    if (integrationProblems.length) items.push({ id: 'integration-health', priority: 'high', category: 'Data reliability', title: 'Resolve integration warnings', details: `${integrationProblems.length} connected or attempted source(s) have an error or warning. Resolve these before relying on their latest metrics.`, evidence: integrationProblems.map(row => row.provider.replaceAll('_', ' ')).slice(0, 4).join(', '), actionLabel: 'Review sources', page: 'sources' });
+    if (!hasSearchData) items.push({ id: 'gsc-connect', priority: 'high', category: 'Organic search', title: gscConnected ? 'Sync Search Console data' : 'Connect Google Search Console', details: gscConnected ? 'The source is connected, but no Search Console metrics were found for this date range. Check property selection and run a sync.' : 'Organic clicks, impressions and search-query snapshots are unavailable until a verified Search Console property is authorized and synced.', evidence: gscConnected ? 'Connected without visible metrics' : 'No Search Console metrics in the selected range', actionLabel: 'Open data sources', page: 'sources' });
+    if (hasSearchData && searchImpressions >= 500 && searchCtr < 2.5) items.push({ id: 'gsc-ctr', priority: 'medium', category: 'Organic search', title: 'Review pages earning impressions but few clicks', details: 'The workspace CTR is below 2.5% for the selected range. This is a triage signal, not a universal benchmark; inspect query, page and position mix before changing titles or descriptions.', evidence: `${number(searchImpressions)} impressions · ${percent(searchCtr)} CTR`, actionLabel: 'View search opportunities', page: 'opportunities' });
+    const quickWin = keywordSnapshotViews.find(row => ['Improve snippet CTR', 'Near page one'].includes(row.opportunity));
+    if (quickWin) items.push({ id: 'query-quick-win', priority: 'medium', category: 'Search opportunity', title: `Investigate “${quickWin.keyword}”`, details: quickWin.opportunity === 'Improve snippet CTR' ? 'This query has meaningful impressions and an average position between 4 and 20, while CTR is under the current 2.5% triage threshold. Review the search intent and visible snippet first.' : 'This query has at least 100 impressions and an average position between 9 and 20. Review whether the landing page answers the query clearly and links to related pages.', evidence: `${number(Number(quickWin.impressions || 0))} impressions · average position ${Number(quickWin.position || 0).toFixed(1)}`, actionLabel: 'Open query details', page: 'opportunities' });
+    if (!hasSessions) items.push({ id: 'ga4-connect', priority: 'medium', category: 'Measurement', title: ga4Connected ? 'Sync Google Analytics 4' : 'Connect Google Analytics 4', details: ga4Connected ? 'GA4 is connected but has no session metrics in this selected range. Check the selected property and run a sync.' : 'Sessions and on-site engagement are not available yet. Connect a GA4 property to distinguish search clicks from website sessions.', evidence: ga4Connected ? 'Connected without visible sessions' : 'No GA4 session metrics in range', actionLabel: 'Open data sources', page: 'sources' });
+    const failedAudit = auditsForBusiness.find(audit => audit.run_status === 'failed');
+    if (failedAudit) items.push({ id: 'audit-failed', priority: 'high', category: 'Technical SEO', title: 'Review the latest failed website audit', details: failedAudit.error_message || 'The latest saved website audit failed. Check the website URL, API quota and provider setup before retrying.', evidence: `${failedAudit.provider.replaceAll('_', ' ')} · ${formatDateTime(failedAudit.created_at)}`, actionLabel: 'Open site health', page: 'site_health' });
+    else if (activeBusiness?.website && !auditsForBusiness.some(audit => audit.provider === 'pagespeed_insights' && audit.run_status === 'completed')) items.push({ id: 'run-audit', priority: 'medium', category: 'Technical SEO', title: 'Run your first website performance audit', details: 'Measure mobile lab performance and SEO checks for the saved business website. CrUX field metrics are separate and only appear when enough real-user data exists.', evidence: activeBusiness.website, actionLabel: 'Open site health', page: 'site_health' });
+    if (activeBusiness && !activeBusiness.website) items.push({ id: 'add-site', priority: 'medium', category: 'Setup', title: 'Add the business website', details: 'A website URL unlocks the on-demand PageSpeed audit and helps connect website-level SEO reporting to the right property.', evidence: 'Website URL is missing in Business settings', actionLabel: 'Edit business details', page: 'settings' });
+    if (needsReplyCount > 0) items.push({ id: 'review-replies', priority: 'medium', category: 'Reputation', title: `Review ${needsReplyCount} review(s) marked as needing a reply`, details: 'Respond in a helpful, professional way and keep customer information private. The count reflects stored review records only.', evidence: `${needsReplyCount} review(s) need a response`, actionLabel: 'Open reviews', page: 'reviews' });
+    if (openTasks.length > 0) items.push({ id: 'open-tasks', priority: openTasks.some(task => task.priority === 'high') ? 'high' : 'low', category: 'Execution', title: `Review ${openTasks.length} outstanding task(s)`, details: 'Prioritize high-impact technical and measurement tasks, then mark each task complete once it is actually done.', evidence: `${completedTaskCount} of ${tasks.length} saved tasks completed`, actionLabel: 'Review task list', page: 'overview' });
+    if (connectedSourceCount === 0 && integrations.length === 0) items.push({ id: 'connect-sources', priority: 'medium', category: 'Measurement', title: 'Connect your first data source', details: 'Start with Search Console, GA4 and PageSpeed to build a foundation for organic search and website health analysis.', evidence: 'No provider integration records exist yet', actionLabel: 'Open data sources', page: 'sources' });
+    if (!items.length) items.push({ id: 'monitor', priority: 'low', category: 'Monitoring', title: 'Keep your measurements fresh', details: 'Your current checks found no high-priority issues. Refresh connected sources regularly and review the trend over several reporting periods.', evidence: `${connectedSourceCount} connected source(s) · ${keywordSnapshotViews.length} keyword snapshot(s)`, actionLabel: 'View overview', page: 'overview' });
+    const priorityOrder = { high: 0, medium: 1, low: 2 };
+    return items.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]).slice(0, 12);
+  }, [integrations, integrationProblems, hasSearchData, searchImpressions, searchCtr, hasSessions, keywordSnapshotViews, auditsForBusiness, activeBusiness?.id, activeBusiness?.website, needsReplyCount, openTasks, completedTaskCount, tasks.length, connectedSourceCount, reviews.length]);
   const latestSearchSync = latestSync(integrations, 'google_search_console');
   const latestAnalyticsSync = latestSync(integrations, 'google_analytics_4');
   const pageMeta = titles[page];
@@ -356,7 +417,7 @@ export default function ProductionApp() {
   useEffect(() => {
     if (!client || !user || !activeWorkspaceId) {
       setBusinesses([]); setBusinessId(''); setOrders([]); setLeads([]); setMetrics([]); setLocalMetrics([]);
-      setReviews([]); setTasks([]); setKeywords([]); setIntegrations([]); setImportRuns([]);
+      setReviews([]); setTasks([]); setKeywords([]); setKeywordSnapshots([]); setIntegrations([]); setImportRuns([]); setWebsiteAudits([]);
       return;
     }
     let alive = true;
@@ -373,6 +434,7 @@ export default function ProductionApp() {
         client.from('tracked_keywords').select('*').eq('workspace_id', activeWorkspaceId).eq('is_demo', false).order('created_at', { ascending: false }).limit(500),
         client.from('integrations').select('*').eq('workspace_id', activeWorkspaceId).order('created_at', { ascending: false }),
         client.from('sales_imports').select('*').eq('workspace_id', activeWorkspaceId).order('created_at', { ascending: false }).limit(50),
+        client.from('keyword_snapshots').select('*').eq('workspace_id', activeWorkspaceId).eq('is_demo', false).order('captured_at', { ascending: false }).limit(2000),
       ]);
       if (!alive) return;
       const fatal = result.find(item => item.error);
@@ -389,6 +451,7 @@ export default function ProductionApp() {
       setReviews((result[5].data || []) as Review[]);
       setTasks((result[6].data || []) as Task[]);
       setKeywords((result[7].data || []) as Keyword[]);
+      setKeywordSnapshots((result[10].data || []) as KeywordSnapshot[]);
       setIntegrations((result[8].data || []) as Integration[]);
       setImportRuns((result[9].data || []) as ImportRun[]);
       setCurrencyForm(activeWorkspace?.currency || 'INR');
@@ -566,7 +629,7 @@ export default function ProductionApp() {
   };
   const refreshDataOnly = async () => {
     if (!client || !activeWorkspaceId) return;
-    const [sales, history, leadRows, taskRows, keywordRows, metricRows, localRows, reviewRows, integrationRows, auditRows] = await Promise.all([
+    const [sales, history, leadRows, taskRows, keywordRows, metricRows, localRows, reviewRows, integrationRows, auditRows, snapshotRows] = await Promise.all([
       client.from('sales_orders').select('*').eq('workspace_id', activeWorkspaceId).eq('is_demo', false).order('order_date', { ascending: false }).limit(2000),
       client.from('sales_imports').select('*').eq('workspace_id', activeWorkspaceId).order('created_at', { ascending: false }).limit(50),
       client.from('leads').select('*').eq('workspace_id', activeWorkspaceId).eq('is_demo', false).order('lead_date', { ascending: false }).limit(1000),
@@ -577,6 +640,7 @@ export default function ProductionApp() {
       client.from('reviews').select('*').eq('workspace_id', activeWorkspaceId).eq('is_demo', false).order('review_date', { ascending: false }).limit(500),
       client.from('integrations').select('*').eq('workspace_id', activeWorkspaceId).order('created_at', { ascending: false }),
       client.from('website_performance_audits').select('*').eq('workspace_id', activeWorkspaceId).order('created_at', { ascending: false }).limit(50),
+      client.from('keyword_snapshots').select('*').eq('workspace_id', activeWorkspaceId).eq('is_demo', false).order('captured_at', { ascending: false }).limit(2000),
     ]);
     if (sales.error) throw sales.error;
     setOrders((sales.data || []) as Order[]);
@@ -584,6 +648,7 @@ export default function ProductionApp() {
     setLeads((leadRows.data || []) as Lead[]);
     setTasks((taskRows.data || []) as Task[]);
     setKeywords((keywordRows.data || []) as Keyword[]);
+    setKeywordSnapshots((snapshotRows.data || []) as KeywordSnapshot[]);
     setMetrics((metricRows.data || []) as Metric[]);
     setLocalMetrics((localRows.data || []) as LocalMetric[]);
     setReviews((reviewRows.data || []) as Review[]);
@@ -943,6 +1008,12 @@ export default function ProductionApp() {
                 <Kpi title="Website sessions" value={hasSessions ? number(sessions) : 'No data yet'} note="Google Analytics 4 sessions" source={hasSessions ? 'Google Analytics 4' : 'Not connected / no synced data'} icon={Globe2} />
                 <Kpi title="Search clicks" value={hasSearchData ? number(searchClicks) : 'No data yet'} note="Clicks from Google Search" source={hasSearchData ? 'Google Search Console' : 'Not connected / no synced data'} icon={Search} />
               </div>
+              <div className="saas-kpi-grid">
+                <Kpi title="Search impressions" value={hasSearchData ? number(searchImpressions) : 'No data yet'} note="Times Google Search showed a result" source={hasSearchData ? 'Google Search Console' : 'Connect and sync Search Console'} icon={Activity} />
+                <Kpi title="New enquiries" value={number(filteredLeads.length)} note="Enquiries recorded in selected range" source="Leads · workspace database" icon={MessageSquareText} />
+                <Kpi title="Local profile actions" value={hasLocalProfileActions ? number(localProfileActions) : 'No data yet'} note="Calls, website clicks and direction requests" source={hasLocalProfileActions ? 'Google Business Profile' : 'No synced local action metrics'} icon={MapPin} />
+                <Kpi title="Average review rating" value={averageReviewRating === null ? 'No data yet' : averageReviewRating.toFixed(1) + ' / 5'} note={number(reviewRatings.length) + ' rated review records'} source="Authorized / imported reviews" icon={Star} />
+              </div>
               <div className="saas-two-col">
                 <section className="saas-card">
                   <CardHeader title="Business activity" subtitle="Recorded sales and enquiries · selected date range" badge="ACTUAL WORKSPACE DATA" />
@@ -954,7 +1025,7 @@ export default function ProductionApp() {
                     <ReadinessRow title="Google Search Console" status={hasSearchData ? 'Data available' : 'Not connected'} detail={hasSearchData ? 'Last sync: ' + formatDateTime(latestSearchSync) : 'Search clicks, impressions and query data are unavailable.'} />
                     <ReadinessRow title="Google Analytics 4" status={hasSessions ? 'Data available' : 'Not connected'} detail={hasSessions ? 'Last sync: ' + formatDateTime(latestAnalyticsSync) : 'Website sessions are not inferred or estimated.'} />
                     <ReadinessRow title="Google Business Profile" status={businessMetrics.profile_views !== undefined ? 'Data available' : 'Not connected'} detail={businessMetrics.profile_views !== undefined ? 'Profile interactions are from stored provider records.' : 'Calls, direction requests and profile views are not yet available.'} />
-                    <ReadinessRow title="Site audit" status="Not run" detail="No crawler has run against your business website." />
+                    <ReadinessRow title="Site audit" status={auditsForBusiness.some(audit => audit.provider === 'pagespeed_insights' && audit.run_status === 'completed') ? 'Data available' : 'Not run'} detail={auditsForBusiness.some(audit => audit.provider === 'pagespeed_insights' && audit.run_status === 'completed') ? 'Latest PageSpeed result is saved in Site health.' : activeBusiness?.website ? 'A mobile PageSpeed audit has not completed yet.' : 'Add the business website in Settings to enable on-demand audits.'} />
                   </div>
                   <button className="saas-text-btn" onClick={() => setPage('sources')}>Review data sources <ArrowRight size={15} /></button>
                 </section>
@@ -970,6 +1041,10 @@ export default function ProductionApp() {
                   {tasks.length ? <div className="saas-task-list">{tasks.slice(0, 5).map(task => <label className="saas-task-row" key={task.id}><input type="checkbox" checked={task.status === 'done'} onChange={() => void handleToggleTask(task)} /><span><b>{task.title}</b><small>{task.description}</small></span><em className={'saas-priority ' + task.priority}>{task.priority}</em></label>)}</div> : <EmptyState icon={CheckCircle2} title="No checklist tasks yet" body="Create a workspace to seed setup recommendations." />}
                   {tasks.length ? <small className="saas-footnote">{completedTaskCount} of {tasks.length} setup actions completed. Changes are saved to Supabase.</small> : null}
                 </section>
+              </div>
+              <div className="saas-two-col">
+                <section className="saas-card"><CardHeader title="Automated opportunities" subtitle="Evidence-backed checks using real workspace data." /><div className="saas-insight-preview-list">{insights.slice(0, 3).map(item => <div className="saas-insight-preview" key={item.id}><span className={'saas-priority ' + item.priority}>{item.priority}</span><div><b>{item.title}</b><small>{item.evidence}</small></div><button className="saas-icon-btn" aria-label={'Open ' + item.title} onClick={() => setPage(item.page)}><ArrowRight size={15} /></button></div>)}</div><button className="saas-text-btn" onClick={() => setPage('insights')}>View all insights and actions <ArrowRight size={15} /></button></section>
+                <section className="saas-card"><CardHeader title="Data coverage" subtitle="Coverage is based on connected data and returned records, not catalog cards." /><div className="saas-readiness-list"><ReadinessRow title="Google Search Console" status={hasSearchData ? 'Data available' : sourceIntegrations.some(row => row.provider === 'google_search_console') ? 'Connected · no data' : 'Not connected'} detail={hasSearchData ? number(searchImpressions) + ' impressions in the selected range' : 'Clicks and impressions appear after a real sync.'} /><ReadinessRow title="Google Analytics 4" status={hasSessions ? 'Data available' : sourceIntegrations.some(row => row.provider === 'google_analytics_4') ? 'Connected · no data' : 'Not connected'} detail={hasSessions ? number(sessions) + ' sessions in the selected range' : 'Sessions remain blank until the authorized property is synced.'} /><ReadinessRow title="PageSpeed Insights" status={latestPageSpeedAudit?.run_status === 'completed' ? 'Data available' : 'Not audited'} detail={latestPageSpeedAudit ? formatDateTime(latestPageSpeedAudit.created_at) : 'Run a mobile lab audit when a website is saved.'} /><ReadinessRow title="Google Business Profile" status={hasLocalProfileActions ? 'Data available' : sourceIntegrations.some(row => row.provider === 'google_business_profile') ? 'Connected · no data' : 'Not connected'} detail={hasLocalProfileActions ? number(localProfileActions) + ' measured local actions' : 'Business Profile metrics depend on API access and sync.'} /></div><button className="saas-text-btn" onClick={() => setPage('sources')}>Manage data sources <ArrowRight size={15} /></button></section>
               </div>
             </>
           ) : null}
@@ -988,7 +1063,64 @@ export default function ProductionApp() {
                 <form className="saas-inline-form" onSubmit={addKeyword}><label>Keyword<input value={keywordInput} onChange={e => setKeywordInput(e.target.value)} placeholder="e.g. laptop repair Dharwad" required /></label><label>Target location<input value={keywordLocation} onChange={e => setKeywordLocation(e.target.value)} /></label><button className="saas-btn primary" type="submit"><Plus size={16} /> Add keyword</button></form>
                 {keywords.length ? <div className="saas-table-wrap"><table className="saas-table"><thead><tr><th>Keyword</th><th>Location</th><th>Landing page</th><th>Rank</th><th>Data source</th></tr></thead><tbody>{keywords.map(keyword => <tr key={keyword.id}><td><b>{keyword.keyword}</b><small>{keyword.intent || 'Intent not classified'}</small></td><td>{keyword.search_location || 'Not specified'}</td><td>{keyword.landing_page || 'Not set'}</td><td><span className="saas-muted">Not tracked</span></td><td>User-entered keyword</td></tr>)}</tbody></table></div> : <EmptyState icon={Search} title="No keywords saved" body="Add the search phrases that matter to your business. A position will appear only when a supported tracker returns one." />}
               </section>
-              <section className="saas-card"><CardHeader title="Website audit" subtitle="Technical issues are only shown after a real audit has run." /><EmptyState icon={ShieldCheck} title="Audit not run" body="No crawler or Core Web Vitals audit is configured. LocalPulse will not invent missing titles, broken links or performance errors." actionLabel="View data sources" onAction={() => setPage('sources')} /></section>
+              <section className="saas-card"><CardHeader title="Website health" subtitle="Measured audit history; no missing scores are estimated." />{auditsForBusiness.length ? <div className="saas-readiness-list">{auditsForBusiness.slice(0, 3).map(audit => <ReadinessRow key={audit.id} title={audit.provider === 'pagespeed_insights' ? 'PageSpeed Insights · lab audit' : 'Chrome UX Report · field data'} status={audit.run_status === 'completed' ? 'Data available' : 'Needs attention'} detail={formatDateTime(audit.created_at) + ' · ' + (audit.error_message || audit.target_url)} />)}</div> : <EmptyState icon={ShieldCheck} title="No saved audit yet" body="Run a mobile PageSpeed lab audit or check CrUX field data for the business website." actionLabel="Open site health" onAction={() => setPage('site_health')} />}<button className="saas-text-btn" onClick={() => setPage('site_health')}>View site health and audit history <ArrowRight size={15} /></button></section>
+            </>
+          ) : null}
+
+          {page === 'opportunities' ? (
+            <>
+              <div className="saas-kpi-grid saas-kpi-grid-three">
+                <Kpi title="Captured search queries" value={number(keywordSnapshotViews.length)} note="Latest saved snapshot per tracked keyword" source="Google Search Console query snapshots" icon={Search} />
+                <Kpi title="Snapshot clicks" value={number(keywordSnapshotViews.reduce((sum, row) => sum + Number(row.clicks || 0), 0))} note="Clicks in latest saved snapshots" source="Keyword snapshot table" icon={TrendingUp} />
+                <Kpi title="Potential opportunities" value={number(qualifiedSearchOpportunities.length)} note="Rule-based triage, not ranking guarantees" source="Impressions, CTR and average position" icon={Target} />
+              </div>
+              <section className="saas-card">
+                <CardHeader title="Search query opportunity table" subtitle="Use observed query data to decide which pages to review. Search Console average position is not a live rank check." badge="REAL SNAPSHOTS ONLY" />
+                {keywordSnapshotViews.length ? <div className="saas-table-wrap"><table className="saas-table"><thead><tr><th>Search query</th><th>Landing page</th><th>Country</th><th>Device</th><th className="num">Clicks</th><th className="num">Impressions</th><th className="num">CTR</th><th className="num">Avg. position</th><th>Signal</th></tr></thead><tbody>{keywordSnapshotViews.slice(0, 100).map(row => <tr key={row.id}><td><b>{row.keyword}</b><small>{row.intent || 'Intent not classified'}</small></td><td>{row.landing_page}</td><td>{row.search_location || '—'}</td><td>{row.device || '—'}</td><td className="num">{number(Number(row.clicks || 0))}</td><td className="num">{number(Number(row.impressions || 0))}</td><td className="num">{percent(Number(row.ctr || 0) * 100)}</td><td className="num">{row.position === null ? '—' : Number(row.position).toFixed(1)}</td><td><span className={'saas-status ' + (row.opportunity === 'Top performer' ? 'connected' : ['Improve snippet CTR','Near page one','Strengthen landing page'].includes(row.opportunity) ? 'planned' : 'disconnected')}>{row.opportunity}</span></td></tr>)}</tbody></table></div> : <EmptyState icon={Search} title="No query snapshots yet" body={keywords.length ? 'Keywords are saved, but no query snapshots are available. Open Data sources, choose a verified Search Console property and run Sync now.' : 'Connect Google Search Console and run a sync. Only query rows returned by Google will appear here.'} actionLabel="Open data sources" onAction={() => setPage('sources')} />}
+                <p className="saas-footnote">Google may omit anonymized queries and does not guarantee that every data row is returned. This table supports prioritization; it is not a complete query census.</p>
+              </section>
+              <section className="saas-card"><CardHeader title="Transparent opportunity rules" subtitle="Thresholds are heuristics to help triage, not universal SEO benchmarks." /><div className="saas-two-col-inner"><ReadinessRow title="Improve snippet CTR" status="Rule of thumb" detail="At least 100 impressions, average position from 4–20 and CTR below 2.5%." /><ReadinessRow title="Near page one" status="Rule of thumb" detail="At least 100 impressions and average position from 9–20." /><ReadinessRow title="Strengthen landing page" status="Rule of thumb" detail="At least 100 impressions and average position beyond 20." /></div></section>
+            </>
+          ) : null}
+
+          {page === 'site_health' ? (
+            <>
+              <div className="saas-kpi-grid saas-kpi-grid-three">
+                <Kpi title="Latest lab performance" value={latestPageSpeedAudit?.run_status === 'completed' ? (latestPageSpeedAudit.result.scores?.find(score => /performance/i.test(score.label))?.value == null ? 'No score' : latestPageSpeedAudit.result.scores?.find(score => /performance/i.test(score.label))?.value + '/100') : 'No data yet'} note="Lighthouse lab result · usually mobile" source="PageSpeed Insights" icon={Gauge} />
+                <Kpi title="Latest lab SEO score" value={latestPageSpeedAudit?.run_status === 'completed' ? (latestPageSpeedAudit.result.scores?.find(score => /^seo$/i.test(score.label))?.value == null ? 'No score' : latestPageSpeedAudit.result.scores?.find(score => /^seo$/i.test(score.label))?.value + '/100') : 'No data yet'} note="Automated audit checks, not rankings" source="PageSpeed Insights" icon={Search} />
+                <Kpi title="Audit records" value={number(auditsForBusiness.length)} note="Saved audit attempts for this business" source="Workspace audit history" icon={ShieldCheck} />
+              </div>
+              <section className="saas-card"><CardHeader title="Run a website check" subtitle="Lab performance and real-user field data are different measurements." />
+                <div className="saas-audit-actions">
+                  <div><b>PageSpeed Insights</b><p>Run a mobile Lighthouse audit for the website saved in Business settings.</p><button className="saas-btn primary" disabled={auditBusyProvider === 'pagespeed_insights' || !activeBusiness?.website} title={!activeBusiness?.website ? 'Add your business website in Settings first.' : undefined} onClick={() => void runWebsiteAudit('pagespeed_insights')}>{auditBusyProvider === 'pagespeed_insights' ? <LoaderCircle className="saas-spin" size={15} /> : <Activity size={15} />} Run mobile audit</button></div>
+                  <div><b>Chrome UX Report</b><p>Check aggregated real-user Core Web Vitals when the origin has enough eligible Chrome traffic.</p><button className="saas-btn secondary" disabled={auditBusyProvider === 'chrome_ux_report' || !activeBusiness?.website} title={!activeBusiness?.website ? 'Add your business website in Settings first.' : undefined} onClick={() => void runWebsiteAudit('chrome_ux_report')}>{auditBusyProvider === 'chrome_ux_report' ? <LoaderCircle className="saas-spin" size={15} /> : <Gauge size={15} />} Check field data</button></div>
+                </div>
+                {!activeBusiness?.website ? <p className="saas-footnote">Add your public website in Settings before running these checks. API keys, provider quotas and field-data eligibility may affect results.</p> : null}
+              </section>
+              {auditsForBusiness.length ? <section className="saas-card"><CardHeader title="Recent audit results" subtitle="Latest saved audit first. Open Data sources for per-provider connection details." />
+                <div className="saas-two-col">{[latestPageSpeedAudit,latestCruxAudit].filter((audit): audit is WebsiteAudit => Boolean(audit)).map(audit => <article className="saas-audit-summary" key={audit.id}><div className="saas-audit-summary-head"><div><b>{audit.provider === 'pagespeed_insights' ? 'PageSpeed Insights' : 'Chrome UX Report'}</b><small>{formatDateTime(audit.created_at)} · {audit.strategy}</small></div><span className={'saas-status ' + (audit.run_status === 'completed' ? 'connected' : 'disconnected')}>{audit.run_status === 'completed' ? 'Completed' : 'Failed'}</span></div>{audit.run_status === 'failed' ? <p className="saas-error-copy">{audit.error_message || 'The audit failed. Check API setup, quotas and website URL.'}</p> : <>
+                    {audit.result.scores?.length ? <div className="saas-audit-scores">{audit.result.scores.map(score => <div key={score.label}><span>{score.label}</span><b>{score.value == null ? '—' : score.value + '/100'}</b></div>)}</div> : null}
+                    {audit.result.metrics?.length ? <div className="saas-audit-metrics">{audit.result.metrics.map(metric => <div className={'saas-audit-metric ' + (metric.status ? 'state-' + metric.status.replace(/\s+/g, '-') : '')} key={metric.label}><span>{metric.label}</span><b>{metric.value}</b>{metric.status ? <small>{metric.status}</small> : null}</div>)}</div> : <p className="saas-muted">No eligible field metrics were returned. CrUX may not have enough traffic for this origin.</p>}
+                    {audit.result.opportunities?.length ? <div className="saas-audit-opportunities"><b>Top recommendations</b>{audit.result.opportunities.slice(0, 5).map(item => <div key={item.title}><span>{item.title}</span><small>{item.savings}</small><p>{item.details}</p></div>)}</div> : null}
+                    <p className="saas-audit-note">{audit.result.note || 'Results reflect the latest saved audit.'}</p>
+                  </>}</article>)}</div>
+                <div className="saas-table-wrap"><table className="saas-table"><thead><tr><th>Checked at</th><th>Provider</th><th>Website</th><th>Type</th><th>Status</th><th>Headline result</th></tr></thead><tbody>{auditsForBusiness.slice(0, 30).map(audit => <tr key={audit.id}><td>{formatDateTime(audit.created_at)}</td><td>{audit.provider === 'pagespeed_insights' ? 'PageSpeed Insights' : 'Chrome UX Report'}</td><td>{audit.target_url}</td><td>{audit.strategy}</td><td><span className={'saas-status ' + (audit.run_status === 'completed' ? 'connected' : 'disconnected')}>{audit.run_status}</span></td><td>{audit.run_status === 'failed' ? audit.error_message || 'Failed' : audit.result.scores?.map(score => score.label + ': ' + (score.value ?? '—')).join(' · ') || audit.result.metrics?.map(metric => metric.label + ': ' + metric.value).join(' · ') || 'Audit completed; no eligible metrics returned'}</td></tr>)}</tbody></table></div>
+              </section> : <section className="saas-card"><EmptyState icon={ShieldCheck} title="No saved website audits" body="Run PageSpeed Insights to measure lab performance. Chrome UX Report requires an API key and eligible origin field data." actionLabel="Review data-source setup" onAction={() => setPage('sources')} /></section>}
+              <section className="saas-card"><CardHeader title="Interpret results correctly" subtitle="Avoid comparing unlike measurements." /><div className="saas-two-col-inner"><ReadinessRow title="PageSpeed Insights" status="Lab audit" detail="Scores and opportunities come from a Lighthouse test run at the selected time; results can vary between runs." /><ReadinessRow title="Chrome UX Report" status="Field data" detail="Aggregated real-user metrics such as LCP, INP and CLS are percentile-based and may be unavailable for low-traffic origins." /><ReadinessRow title="Whole-site crawler" status="Coming soon" detail="Broken-link crawling, canonical checks, sitemap coverage and page-level technical checks are separate features not yet connected." /></div></section>
+            </>
+          ) : null}
+
+          {page === 'insights' ? (
+            <>
+              <div className="saas-kpi-grid saas-kpi-grid-three">
+                <Kpi title="High priority" value={number(insights.filter(item => item.priority === 'high').length)} note="Needs checking first" source="Rule-based workspace analysis" icon={AlertCircle} />
+                <Kpi title="Opportunities" value={number(qualifiedSearchOpportunities.length)} note="From saved Search Console snapshots" source="Search opportunities" icon={Target} />
+                <Kpi title="Connected sources" value={number(connectedSourceCount)} note={number(integrationProblems.length) + ' source warnings'} source="Workspace integrations" icon={Plug} />
+              </div>
+              <section className="saas-card"><CardHeader title="Recommended next actions" subtitle="Every recommendation includes the signal behind it and a destination. These are rule-based diagnostics, not guarantees of ranking gains." badge="TRANSPARENT RULES" />
+                <div className="saas-insight-list">{insights.map(item => <article className={'saas-insight-card ' + item.priority} key={item.id}><div className="saas-insight-top"><span className="saas-insight-category">{item.category}</span><span className={'saas-priority ' + item.priority}>{item.priority}</span></div><h3>{item.title}</h3><p>{item.details}</p><div className="saas-insight-evidence"><b>Signal</b><span>{item.evidence}</span></div><button className="saas-btn secondary" onClick={() => setPage(item.page)}>{item.actionLabel} <ArrowRight size={14} /></button></article>)}</div>
+              </section>
+              <section className="saas-card"><CardHeader title="How LocalPulse analyses your workspace" subtitle="Checks use data that was actually returned and state the limits." /><div className="saas-two-col-inner"><ReadinessRow title="Data presence" status="Checked" detail="Connection state and visible metrics separate missing setup from measured zero values." /><ReadinessRow title="Search opportunity triage" status="Checked" detail="Prioritizes query snapshots by observed impressions, CTR and average position; thresholds are editable heuristics." /><ReadinessRow title="Site health" status="Checked" detail="Uses actual PageSpeed and CrUX audit results, including failure messages." /><ReadinessRow title="Limitations" status="Important" detail="Google can omit anonymized queries; field data needs eligible traffic; live rank tracking and whole-site crawling need separate providers/workers." /></div></section>
             </>
           ) : null}
 
