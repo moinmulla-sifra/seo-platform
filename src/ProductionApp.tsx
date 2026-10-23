@@ -1056,7 +1056,10 @@ export default function ProductionApp() {
                 </ol>
                 <p className="saas-footnote">OAuth secrets stay server-side. Customers authenticate on Google and grant selected read-only access; LocalPulse never asks for their Google password.</p>
               </section> : null}
-              <div className="saas-integrations-grid">{providers.map(provider => {
+              <div className="saas-integrations-grid">{[...providers].sort((a, b) => {
+                const order = ['available', 'experimental', 'planned'];
+                return order.indexOf(a.readiness) - order.indexOf(b.readiness);
+              }).map(provider => {
                 const source = integrations.filter(row => row.provider === provider.id).sort((a, b) => String(b.last_sync_at || '').localeCompare(String(a.last_sync_at || '')))[0];
                 const isGoogle = ['google_search_console','google_analytics_4','google_business_profile','google_sheets'].includes(provider.id);
                 const isWebsiteAudit = ['pagespeed_insights','chrome_ux_report'].includes(provider.id);
@@ -1065,7 +1068,7 @@ export default function ProductionApp() {
                 const auditBusy = auditBusyProvider === provider.id;
                 const connected = source?.status === 'connected';
                 const selected = Boolean(source?.external_property_id && source.external_property_id !== '__resource_pending__');
-                const status = provider.readiness === 'planned' ? 'Planned'
+                const status = provider.readiness === 'planned' ? 'Coming soon'
                   : provider.readiness === 'experimental' ? 'Experimental'
                   : provider.id === 'csv_import' ? 'Available'
                   : isWebsiteAudit ? (latestAudit?.run_status === 'failed' ? 'Needs attention' : latestAudit ? 'Audit available' : 'Ready to run')
@@ -1073,7 +1076,7 @@ export default function ProductionApp() {
                   : source?.status === 'pending' ? 'Authorization pending'
                   : source?.status === 'error' ? 'Needs attention' : 'Not connected';
                 const statusClass = (status === 'Connected' || status === 'Available' || status === 'Ready to run' || status === 'Audit available') ? 'connected'
-                  : status === 'Planned' ? 'planned'
+                  : status === 'Coming soon' ? 'planned'
                   : status === 'Experimental' ? 'experimental' : 'disconnected';
                 const icon = provider.id.indexOf('google') === 0 || ['bing_webmaster','indexnow','bing_places','wordpress','strapi','ghost_cms'].includes(provider.id) ? Globe2
                   : ['csv_import','google_sheets','google_drive','structured_file_import'].includes(provider.id) ? FileSpreadsheet : Database;
@@ -1107,7 +1110,7 @@ export default function ProductionApp() {
                           <button className="saas-disconnect-btn" disabled={busy} onClick={() => void disconnectGoogle(provider.id, source!)}>Disconnect</button>
                         </>}
                     </div>
-                    : provider.readiness === 'planned' ? <button className="saas-btn secondary" disabled aria-label={provider.name + ' integration is planned'}>Planned integration</button>
+                    : provider.readiness === 'planned' ? <button className="saas-btn secondary" disabled aria-label={provider.name + ' integration is coming soon'}>Coming soon</button>
                     : provider.readiness === 'experimental' ? <button className="saas-btn secondary" disabled aria-label={provider.name + ' integration is experimental'}>Experimental connector</button>
                     : <button className="saas-btn secondary" disabled>Not configured</button>}
                   {pickerOpen && propertyPicker ? <div className="saas-property-picker">
