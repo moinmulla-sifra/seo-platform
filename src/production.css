@@ -414,3 +414,39 @@
   .saas-redirect-line .saas-btn { width: 100%; }
   .saas-google-setup .saas-table td:first-child { width: auto; }
 }
+
+/* Unified analytics, site diagnostics and opportunity UI */
+.saas-insight-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.saas-insight-card { min-width: 0; border: 1px solid #e4e9f2; border-radius: 12px; padding: 16px; background: #fff; }
+.saas-insight-card.high { border-color: #f0d5d7; background: linear-gradient(145deg,#fff 0%,#fffafb 100%); }
+.saas-insight-card.medium { border-color: #ece4cd; }
+.saas-insight-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.saas-insight-category { color: #79859a; font-size: 9px; font-weight: 800; letter-spacing: .7px; text-transform: uppercase; }
+.saas-insight-card h3 { margin: 12px 0 7px; font: 800 14px/1.4 'Manrope', sans-serif; color: #27344d; }
+.saas-insight-card p { margin: 0 0 12px; color: #6e7b92; font-size: 11px; line-height: 1.65; }
+.saas-insight-evidence { display: flex; flex-direction: column; gap: 4px; border: 1px solid #edf0f6; border-radius: 8px; padding: 10px; margin: 12px 0; background: #f8f9fc; }
+.saas-insight-evidence b { color: #8792a6; font-size: 9px; text-transform: uppercase; letter-spacing: .5px; }
+.saas-insight-evidence span { color: #4c5b75; font-size: 10px; overflow-wrap: anywhere; }
+.saas-priority.high { color: #a7424a; background: #fff0f0; }
+.saas-priority.medium { color: #8a681c; background: #fff7e6; }
+.saas-priority.low { color: #40766d; background: #edf8f5; }
+.saas-insight-card .saas-btn { width: 100%; margin-top: 1px; }
+.saas-insight-preview-list { display: flex; flex-direction: column; }
+.saas-insight-preview { display: flex; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid #eef1f6; }
+.saas-insight-preview:last-child { border-bottom: 0; }
+.saas-insight-preview > div { min-width: 0; flex: 1; }
+.saas-insight-preview b { display: block; color: #39465e; font-size: 11px; }
+.saas-insight-preview small { display: block; color: #8b96a8; font-size: 9px; margin-top: 3px; }
+.saas-audit-actions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+.saas-audit-actions > div { border: 1px solid #e6eaf3; border-radius: 11px; padding: 15px; background: #fafbfe; }
+.saas-audit-actions > div > b { color: #334159; font: 800 13px 'Manrope',sans-serif; }
+.saas-audit-actions p { color: #748198; font-size: 11px; line-height: 1.6; min-height: 52px; }
+.saas-audit-actions .saas-btn { width: 100%; }
+.saas-audit-summary { min-width: 0; padding: 14px; border: 1px solid #e6eaf3; border-radius: 11px; background: #fff; }
+.saas-audit-summary-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
+.saas-audit-summary-head b { display: block; color: #344159; font-size: 12px; }
+.saas-audit-summary-head small { display: block; color: #8994a7; font-size: 9px; margin-top: 4px; }
+.saas-audit-summary .saas-audit-opportunities > div p { color: #748198; font-size: 10px; line-height: 1.6; margin: 4px 0 0; }
+.saas-two-col-inner { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 20px; }
+@media (max-width: 980px) { .saas-insight-list { grid-template-columns: 1fr; } }
+@media (max-width: 720px) { .saas-audit-actions, .saas-two-col-inner { grid-template-columns: 1fr; } .saas-audit-actions p { min-height: 0; } }
